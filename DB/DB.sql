@@ -10,10 +10,13 @@ CREATE TABLE IF NOT EXISTS "sensor_logs" (
   "Message" text,
   "Score" text,
   "device_id" text,
+  "lan_ip" text,
+  "received_at" timestamptz DEFAULT NOW(),
   "latency" int,
   "trigger_source" text
 );
 
+-- password stores a bcrypt hash, never plaintext
 CREATE TABLE IF NOT EXISTS device_credentials (
   device_id text PRIMARY KEY,
   password  text NOT NULL
@@ -21,10 +24,9 @@ CREATE TABLE IF NOT EXISTS device_credentials (
 
 DO $$
 BEGIN
-  CREATE USER iot_user WITH PASSWORD '004232';
-EXCEPTION WHEN duplicate_object THEN NULL;
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'iot_user') THEN
+    GRANT ALL PRIVILEGES ON TABLE sensor_logs TO iot_user;
+    GRANT USAGE, SELECT ON SEQUENCE sensor_logs_id_seq TO iot_user;
+    GRANT ALL PRIVILEGES ON TABLE device_credentials TO iot_user;
+  END IF;
 END $$;
-
-GRANT ALL PRIVILEGES ON TABLE sensor_logs TO iot_user;
-GRANT USAGE, SELECT ON SEQUENCE sensor_logs_id_seq TO iot_user;
-GRANT ALL PRIVILEGES ON TABLE device_credentials TO iot_user;

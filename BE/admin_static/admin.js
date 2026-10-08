@@ -79,18 +79,30 @@
     return currentUser && currentUser.role === 'admin';
   }
 
-  function connectDeviceWS(deviceId) {
+  function canUseLanSockets() {
+    return window.location.protocol === "http:";
+  }
+
+  function lanHost(device) {
+    return device && device.lan_ip ? device.lan_ip : "";
+  }
+
+  function connectDeviceWS(device) {
+    if (!canUseLanSockets()) return;
+    var host = lanHost(device);
+    var deviceId = device.device_id;
+    if (!host) return;
     if (deviceWsMap[deviceId]) {
       var s = deviceWsMap[deviceId].readyState;
       if (s === WebSocket.OPEN || s === WebSocket.CONNECTING) return;
     }
-    var ws = new WebSocket("ws://" + deviceId + "/ws");
+    var ws = new WebSocket("ws://" + host + "/ws");
     deviceWsMap[deviceId] = ws;
 
     ws.onmessage = function (evt) {
       var data;
       try { data = JSON.parse(evt.data); } catch (e) { return; }
-      var card = document.querySelector(".device-card[data-device-id='" + deviceId + "']");
+      var card = document.querySelector(".device-card[data-device-id='" + String(deviceId).replace(/['\\]/g, "") + "']");
       if (!card) return;
 
       if (typeof data.temperature === "number") {
@@ -121,16 +133,15 @@
     ws.onclose = function () {
       delete deviceWsMap[deviceId];
       setTimeout(function () {
-        if (currentDevices.some(function (d) { return d.device_id === deviceId; })) {
-          connectDeviceWS(deviceId);
-        }
+        var next = currentDevices.find(function (d) { return d.device_id === deviceId; });
+        if (next) connectDeviceWS(next);
       }, 3000);
     };
     ws.onerror = function () { ws.close(); };
   }
 
   function syncDeviceWsSessions() {
-    currentDevices.forEach(function (d) { connectDeviceWS(d.device_id); });
+    currentDevices.forEach(function (d) { connectDeviceWS(d); });
     Object.keys(deviceWsMap).forEach(function (id) {
       if (!currentDevices.some(function (d) { return d.device_id === id; })) {
         try { deviceWsMap[id].close(); } catch (e) {}
@@ -140,7 +151,8 @@
   }
 
   function detailUrl(device) {
-    return "http://" + device.device_id + "/";
+    var host = lanHost(device);
+    return host ? ("http://" + host + "/") : "";
   }
 
   function fmtValue(v) {
@@ -149,6 +161,15 @@
 
   function displayName(deviceId) {
     return deviceId || "Unknown";
+  }
+
+  function escapeHtml(str) {
+    return String(str == null ? "" : str)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;")
+      .replace(/'/g, "&#39;");
   }
 
   function fmtTimestamp(tsStr) {
@@ -172,14 +193,16 @@
   }
 
   function getTimestampMs(device) {
-    if (!device || !device.timestamp_up) return null;
-    var ts = new Date(device.timestamp_up).getTime();
+    if (!device) return null;
+    var raw = device.received_at || device.timestamp_up;
+    if (!raw) return null;
+    var ts = new Date(raw).getTime();
     return isNaN(ts) ? null : ts;
   }
 
   function updateStaleState(device) {
     var id = device.device_id;
-    if (!device.timestamp_up) {
+    if (!device.received_at && !device.timestamp_up) {
       delete countdownStart[id];
       return;
     }
@@ -352,7 +375,8 @@
       checkboxHtml +
       '<div class="device-card-header">' +
         '<div>' +
-          '<div class="device-name">' + displayName(device.device_id) + '</div>' +
+          '<div class="device-name">' + escapeHtml(displayName(device.device_id)) + '</div>' +
+          (device.lan_ip ? '<div class="device-ip" style="font-size:11px;color:var(--text-muted);">' + escapeHtml(device.lan_ip) + '</div>' : '') +
         '</div>' +
         '<span class="status-pill ' + cardStatusClass + ' js-status-pill">' +
           '<span class="status-dot"></span><span class="js-status-label">' + cardStatusLabel + '</span>' +
@@ -361,15 +385,15 @@
       '<div class="sensor-row">' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Nhiệt độ</span>' +
-          '<span class="sensor-value js-val-temp ' + tempColorClass(device.temperature) + '">' + fmtValue(device.temperature) + '</span>' +
+          '<span class="sensor-value js-val-temp ' + tempColorClass(device.temperature) + '">' + escapeHtml(fmtValue(device.temperature)) + '</span>' +
         '</div>' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Độ ẩm KK</span>' +
-          '<span class="sensor-value js-val-humi ' + humiColorClass(device.humidity) + '">' + fmtValue(device.humidity) + '</span>' +
+          '<span class="sensor-value js-val-humi ' + humiColorClass(device.humidity) + '">' + escapeHtml(fmtValue(device.humidity)) + '</span>' +
         '</div>' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Độ ẩm đất</span>' +
-          '<span class="sensor-value js-val-soil ' + soilColorClass(device.soil_moisture) + '">' + fmtValue(device.soil_moisture) + '</span>' +
+          '<span class="sensor-value js-val-soil ' + soilColorClass(device.soil_moisture) + '">' + escapeHtml(fmtValue(device.soil_moisture)) + '</span>' +
         '</div>' +
       '</div>' +
       '<div class="card-footer">' +
@@ -401,6 +425,10 @@
     if (arrowBtn) {
       arrowBtn.addEventListener("click", function (e) {
         e.stopPropagation();
+        if (!url) {
+          alert("Chưa có IP LAN của thiết bị. Mở dashboard ESP32 trực tiếp trên mạng local (HTTP).");
+          return;
+        }
         openDeviceLoginModal(device.device_id, url);
       });
     }

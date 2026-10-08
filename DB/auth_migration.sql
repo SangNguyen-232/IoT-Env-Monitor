@@ -1,4 +1,5 @@
 -- DB/auth_migration.sql
+-- password stores a bcrypt hash, never plaintext. Seed the first admin via ADMIN_USERNAME / ADMIN_PASSWORD.
 CREATE TABLE IF NOT EXISTS system_users (
   id         SERIAL PRIMARY KEY,
   username   TEXT NOT NULL UNIQUE,
@@ -7,10 +8,10 @@ CREATE TABLE IF NOT EXISTS system_users (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
-GRANT ALL PRIVILEGES ON TABLE system_users TO iot_user;
-GRANT USAGE, SELECT ON SEQUENCE system_users_id_seq TO iot_user;
-
-INSERT INTO system_users (username, password, role) VALUES
-  ('admin', '123456', 'admin'),
-  ('user1', '123456', 'user')
-ON CONFLICT (username) DO NOTHING;
+DO $$
+BEGIN
+  IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'iot_user') THEN
+    GRANT ALL PRIVILEGES ON TABLE system_users TO iot_user;
+    GRANT USAGE, SELECT ON SEQUENCE system_users_id_seq TO iot_user;
+  END IF;
+END $$;

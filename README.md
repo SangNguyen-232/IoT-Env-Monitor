@@ -472,8 +472,8 @@ node index.js
 
 | Endpoint                 | Method   | Auth  | Description                                                        |
 | ------------------------ | -------- | ----- | ------------------------------------------------------------------ |
-| `/login`               | GET/POST | —    | Login page / login handler                                         |
-| `/register`            | POST     | —    | Registers a new account (role =`user`)                           |
+| `/login`               | GET/POST | —    | Login page / login handler (rate-limited)                          |
+| `/register`            | POST     | —    | Disabled; accounts are created by an admin                         |
 | `/logout`              | POST     | —    | Destroys the session                                               |
 | `/api/me`              | GET      | —    | Returns`{loggedIn, username, role}`                              |
 | `/admin/api/users`     | GET      | Admin | Lists all system accounts                                          |
@@ -484,7 +484,7 @@ node index.js
 
 ### PostgreSQL Database
 
-**Database:** `iot_db` — **User:** `iot_user` / password: `004232`
+**Database:** `iot_db` — **User / password:** from `.env` (`DB_USER`, `DB_PASS`)
 
 **`sensor_logs` table (13 columns):**
 
@@ -531,11 +531,9 @@ psql -U postgres -d iot_db -f DB/auth_migration.sql
 
 ### Authentication and Authorization
 
-- **Session:** `express-session`, lifetime **8 hours**, `httpOnly` cookie.
-- **Default accounts** (created by `auth_migration.sql`):
-  - `admin` / `123456` — role `admin`
-  - `user1` / `123456` — role `user`
-- **Passwords are currently stored as plain text** in PostgreSQL — this is a known limitation; they must be replaced with `bcrypt` before production deployment.
+- **Session:** `express-session`, lifetime **8 hours**, `httpOnly` cookie, secret from `SESSION_SECRET`.
+- **First admin:** created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` when `system_users` is empty. Additional users are created by an admin.
+- **Passwords** are stored with bcrypt. Legacy plaintext values are rehashed on the next successful login.
 
 **Authorization matrix:**
 
@@ -697,7 +695,10 @@ pio run --target upload
 **Requirements:** Node.js ≥ 16, PostgreSQL running.
 
 ```bash
-# Initialize the database
+cp .env.example .env
+# Edit .env: DB_PASS, SESSION_SECRET, SENSOR_API_KEY, ADMIN_PASSWORD
+
+# Initialize the database (create DB_USER yourself; do not commit passwords)
 psql -U postgres -f DB/DB.sql
 psql -U postgres -d iot_db -f DB/auth_migration.sql
 
@@ -728,13 +729,13 @@ node index.js
 
 ## Security Notes
 
-> ⚠️ **System account passwords** are currently stored as **plain text** in PostgreSQL. This is a known limitation — they must be replaced with `bcrypt` before production deployment (noted in `auth_migration.sql`).
+> Copy `.env.example` to `.env` and `include/secrets.h.example` to `include/secrets.h`. Do not commit real passwords, `SESSION_SECRET`, or `data/wifi_info.json`.
 
-> ⚠️ **Default accounts** `admin/123456` and `user1/123456` — change these immediately after deployment.
+> System and device passwords are stored with **bcrypt**. Existing plaintext hashes are upgraded on the next successful login. The first admin is created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` when `system_users` is empty.
 
-> ⚠️ **Session secret** `'iot-secret-change-in-production'` in `index.js` — must be replaced with a long random string before production.
+> `POST /sensor` requires header `X-Device-Key` matching `SENSOR_API_KEY`. ESP32 HTTP/WebSocket/OTA endpoints use HTTP Basic Auth from `DEVICE_HTTP_USER` / `DEVICE_HTTP_PASS`.
 
-> ⚠️ **Database password** `004232` for `iot_user` is hardcoded in `index.js` — move to an environment variable before production.
+> Public `/register` is disabled. Login is rate-limited. `POST /sensor` rejects unsafe `device_id` values.
 
 > ℹ️ **The `latency` column** in `sensor_logs` stores values in **microseconds (µs)**, not milliseconds.
 
@@ -761,6 +762,7 @@ node index.js
 - `express@^5.2.1` — REST framework
 - `express-session@^1.19.0` — session management
 - `pg@^8.22.0` — PostgreSQL client
+- `bcryptjs` — password hashing
 
 **Frontend (CDN):**
 
