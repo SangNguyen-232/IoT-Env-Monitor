@@ -340,9 +340,9 @@ setup()
 
 STA connection timeout: **10 seconds** (`millis() - start < 10000`).
 
-**`global_admin_ip` detection mechanism:**
+**Backend target URL configuration (`SENSOR_API_URL`):**
 
-`global_admin_ip` is recorded from the IP address of the first client to connect to the embedded web server (via HTTP or WebSocket). The ESP32 **does not use a fixed backend IP** — the data submission URL is constructed dynamically: `http://<global_admin_ip>:3000/sensor`. If no IP has been recorded yet, `task_database` skips the POST and logs "No admin IP available."
+The ESP32 reads the backend server URL (`g_sensorApiUrl`) from `SENSOR_API_URL` (defined in `secrets.h`), which supports HTTPS domains or Cloudflare Tunnels. If `/server.json` exists in LittleFS (configurable via the web settings), its `url` value overrides the default. `task_database` automatically appends `/sensor` and sends data via HTTP/HTTPS POST.
 
 **Switching Wi-Fi networks without restarting** (`POST /api/wifi-switch`):
 
@@ -739,7 +739,7 @@ node index.js
 
 > ℹ️ **The `latency` column** in `sensor_logs` stores values in **microseconds (µs)**, not milliseconds.
 
-> ℹ️ **Backend IP detection mechanism:** The ESP32 does not use a fixed backend IP. The device records the IP of the first client to connect to the embedded web server (via HTTP or WebSocket) and uses that IP as the backend target. The backend must be reachable from the same network as the browser connecting to the device.
+> ℹ️ **Backend target URL:** The ESP32 sends sensor telemetry to `SENSOR_API_URL` (configured in `include/secrets.h` or overridden by `/server.json` via the web dashboard settings). Ensure the backend is reachable via this URL.
 
 > ℹ️ **Factory reset** only deletes `/info.dat` and writes `{}` to `/wifi_info.json`. The Wi-Fi list in `/wifi_list.json` is **not deleted** by a factory reset.
 

@@ -6,3 +6,16 @@
 .env
 include/secrets.h
 data/wifi_info.json
+
+# Dependencies and Virtual Environments
+.venv/
+node_modules/
+**/node_modules/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS metadata
+.DS_Store
+Thumbs.db
