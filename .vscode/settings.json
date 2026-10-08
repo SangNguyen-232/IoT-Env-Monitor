@@ -16,5 +16,6 @@
         "span": "cpp",
         "regex": "cpp"
     },
-    "cmake.sourceDirectory": "C:/Users/Admin/Downloads/Internship_Project/lib/ArduinoJson/src"
+    "cmake.sourceDirectory": "C:/Users/Admin/Downloads/Internship_Project/lib/ArduinoJson/src",
+    "cmake.ignoreCMakeListsMissing": true
 }

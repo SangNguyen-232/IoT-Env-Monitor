@@ -6,6 +6,7 @@
 #include <task_webserver.h>
 
 extern bool Wifi_reconnect();
+extern bool startSTA();
 extern void startAP();
 extern void Wifi_switch_to(const String& ssid, const String& pass);
 

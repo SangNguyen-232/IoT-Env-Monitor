@@ -1,4 +1,5 @@
 #include "task_wifi.h"
+#include "secrets.h"
 
 void startAP()
 {
@@ -8,11 +9,12 @@ void startAP()
     Serial.println(WiFi.softAPIP());
 }
 
-void startSTA()
+bool startSTA()
 {
     if (wifi_ssid.isEmpty())
     {
-        vTaskDelete(NULL);
+        Serial.println("STA: SSID trống, bỏ qua kết nối.");
+        return false;
     }
 
     WiFi.mode(WIFI_STA);
@@ -30,7 +32,8 @@ void startSTA()
 
     if (WiFi.status() != WL_CONNECTED)
     {
-        vTaskDelete(NULL);
+        Serial.println("STA: kết nối thất bại, giữ task loop.");
+        return false;
     }
 
     Serial.print("Địa chỉ IP chế độ STA Mode: ");
@@ -41,23 +44,51 @@ void startSTA()
     configTime(7 * 3600, 0, "pool.ntp.org", "time.nist.gov");
 
     xSemaphoreGive(xBinarySemaphoreInternet);
+    return true;
 }
 
 bool Wifi_reconnect()
 {
-    const wl_status_t status = WiFi.status();
-    if (status == WL_CONNECTED)
+    if (WiFi.status() == WL_CONNECTED)
     {
         return true;
     }
-    startSTA();
+
+    static unsigned long lastAttemptMs = 0;
+    const unsigned long now = millis();
+    if (lastAttemptMs != 0 && (now - lastAttemptMs) < 15000)
+    {
+        return true;
+    }
+    lastAttemptMs = now;
+
+    if (startSTA())
+    {
+        return true;
+    }
+
+    startAP();
     return false;
 }
 
 void Wifi_switch_to(const String& ssid, const String& pass) {
-    Save_wifi_to_list(ssid, pass);
+    const String prevSsid = wifi_ssid;
+    const String prevPass = wifi_pass;
+
     Save_info_NoRestart(ssid, pass);
     WiFi.disconnect(true);
     vTaskDelay(pdMS_TO_TICKS(500));
-    startSTA();
+
+    if (startSTA())
+    {
+        Save_wifi_to_list(ssid, pass);
+        return;
+    }
+
+    Serial.println("Chuyển WiFi thất bại, khôi phục mạng trước đó.");
+    Save_info_NoRestart(prevSsid, prevPass);
+    if (!startSTA())
+    {
+        startAP();
+    }
 }

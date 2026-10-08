@@ -5,13 +5,13 @@ pip install esptool littlefs-python
 Usage:
 
 1. Locate the default_8MB.csv file in PlatformIO.
-   Get-ChildItem -Path "$env:USERPROFILE\.platformio" -Recurse -Filter "default_8MB.csv" | Select-Object FullName
+   find ~/.platformio -type f -name "default_8MB.csv"
 
 2. Open the file and find the Offset and Size values of the spiffs partition. Use these values to specify the correct Offset and Size of the SPIFFS/LittleFS partition in flash.
-   python scripts/pull_wifi_info.py --port COM7 --offset ..... --size .....
+   python scripts/pull_wifi_info.py --port /dev/ttyACM0 --offset ..... --size .....
 
 3. Once the default configuration is correct and the system can successfully read and mount the filesystem, run:
-   python scripts/pull_wifi_info.py --port COM7
+   python scripts/pull_wifi_info.py --port /dev/ttyACM0
 """
 
 import argparse

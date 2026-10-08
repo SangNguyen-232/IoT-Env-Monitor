@@ -509,13 +509,13 @@
           html += '<div style="display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);">'
             + '<span style="font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;">' + escapeAttr(item.ssid) + '</span>'
             + '<button class="btn-toggle" style="padding:4px 12px;font-size:12px;flex-shrink:0;"'
-            + ' data-ssid="' + escapeAttr(item.ssid) + '" data-pass="' + escapeAttr(item.pass || '') + '">Chuyển</button>'
+            + ' data-ssid="' + escapeAttr(item.ssid) + '">Chuyển</button>'
             + '</div>';
         });
         container.innerHTML = html;
         container.querySelectorAll('button[data-ssid]').forEach(function (btn) {
           btn.addEventListener('click', function () {
-            switchWifiNetwork(btn.getAttribute('data-ssid'), btn.getAttribute('data-pass'), btn);
+            switchWifiNetwork(btn.getAttribute('data-ssid'), '', btn);
           });
         });
       })
@@ -544,6 +544,15 @@
     }
     settingsModal.style.display = "flex";
     loadAndRenderWifiList();
+    var serverUrlInput = document.getElementById("serverUrl");
+    if (serverUrlInput) {
+      fetch("/api/server-url")
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (data && data.url) serverUrlInput.value = data.url;
+        })
+        .catch(function () {});
+    }
   }
 
   function closeSettingsModal() {
@@ -558,6 +567,8 @@
       e.preventDefault();
       var ssid = document.getElementById("wifiSsid").value;
       var pass = document.getElementById("wifiPass").value;
+      var serverEl = document.getElementById("serverUrl");
+      var server = serverEl ? serverEl.value : "";
 
       var payload = {
         page: "setting",
@@ -565,7 +576,7 @@
           ssid: ssid,
           password: pass,
           token: "",
-          server: "",
+          server: server,
           port: ""
         }
       };
@@ -576,6 +587,33 @@
       } else {
         wifiSettingsMsg.textContent = "Chưa kết nối WebSocket, vui lòng thử lại.";
       }
+    });
+  }
+
+  var serverUrlForm = document.getElementById("serverUrlForm");
+  if (serverUrlForm) {
+    serverUrlForm.addEventListener("submit", function (e) {
+      e.preventDefault();
+      var serverEl = document.getElementById("serverUrl");
+      var url = serverEl ? serverEl.value.trim() : "";
+      if (!url) {
+        if (wifiSettingsMsg) wifiSettingsMsg.textContent = "Nhập URL backend.";
+        return;
+      }
+      fetch("/api/server-url", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: url })
+      })
+        .then(function (r) { return r.json(); })
+        .then(function (data) {
+          if (wifiSettingsMsg) {
+            wifiSettingsMsg.textContent = data.ok ? "Đã lưu URL server." : "Lưu URL thất bại.";
+          }
+        })
+        .catch(function () {
+          if (wifiSettingsMsg) wifiSettingsMsg.textContent = "Lỗi kết nối.";
+        });
     });
   }
 

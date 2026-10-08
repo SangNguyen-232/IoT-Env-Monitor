@@ -6,22 +6,20 @@ services:
     image: postgres:16-alpine
     restart: unless-stopped
     ports:
-      # 5433 trên Windows → 5432 trong container (tránh xung đột PostgreSQL cài sẵn trên Windows)
+      # 5433 trên host → 5432 trong container
       - "5433:5432"
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres_root_pass
-      POSTGRES_DB: iot_db
+      POSTGRES_USER: ${DB_USER:-iot_user}
+      POSTGRES_PASSWORD: ${DB_PASS:?Set DB_PASS in .env}
+      POSTGRES_DB: ${DB_NAME:-iot_db}
     volumes:
-      # Lưu data DB vào Docker volume (bền vững qua restart)
       - pgdata:/var/lib/postgresql/data
-      # Tự động chạy SQL init khi container tạo lần đầu
       - ./DB/DB.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./DB/auth_migration.sql:/docker-entrypoint-initdb.d/02_auth.sql
     networks:
       - iot_net
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d iot_db"]
+      test: ["CMD-SHELL", "pg_isready -U \"$$POSTGRES_USER\" -d \"$$POSTGRES_DB\""]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -34,15 +32,19 @@ services:
       dockerfile: Dockerfile
     restart: unless-stopped
     ports:
-      # Map port 3000 của container ra Windows host port 3000
       - "3000:3000"
+    env_file:
+      - .env
     environment:
-      # Trỏ DB_HOST đến tên service "postgres" trong Docker network
       DB_HOST: postgres
-      DB_NAME: iot_db
-      DB_USER: iot_user
-      DB_PASS: "004232"
+      DB_NAME: ${DB_NAME:-iot_db}
+      DB_USER: ${DB_USER:-iot_user}
+      DB_PASS: ${DB_PASS:?Set DB_PASS in .env}
       DB_PORT: "5432"
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
+      SENSOR_API_KEY: ${SENSOR_API_KEY:?Set SENSOR_API_KEY in .env}
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
     depends_on:
       postgres:
         condition: service_healthy

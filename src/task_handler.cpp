@@ -33,14 +33,22 @@ void handleWebSocketMessage(String message)
     {
         String WIFI_SSID = doc["value"]["ssid"].as<String>();
         String WIFI_PASS = doc["value"]["password"].as<String>();
-        
+        String SERVER_URL = doc["value"]["server"].as<String>();
+
         Serial.println("SSID: " + WIFI_SSID);
-        Serial.println("PASS: " + WIFI_PASS);
+
+        if (!SERVER_URL.isEmpty())
+        {
+            Save_server_url(SERVER_URL);
+        }
 
         String msg = "{\"status\":\"ok\",\"page\":\"setting_saved\"}";
         ws.textAll(msg);
 
-        Save_wifi_to_list(WIFI_SSID, WIFI_PASS);  
-        Save_info_File(WIFI_SSID, WIFI_PASS);
+        if (!WIFI_SSID.isEmpty())
+        {
+            Save_wifi_to_list(WIFI_SSID, WIFI_PASS);
+            Save_info_File(WIFI_SSID, WIFI_PASS);
+        }
     }
 }
