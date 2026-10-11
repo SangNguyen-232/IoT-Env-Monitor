@@ -165,6 +165,7 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     int64_t latencyUs = (((int64_t)tvUp.tv_sec  * 1000000LL + tvUp.tv_usec)
                     - ((int64_t)tvReal.tv_sec * 1000000LL + tvReal.tv_usec));
 
+    // NOTE: "Score" gửi lên DB chính là mlRollAcc (mức khớp model vs rule), không phải điểm rủi ro.
     String scoreStr;
     if (mlRollAcc >= 100.0f)
     {

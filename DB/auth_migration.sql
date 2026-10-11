@@ -8,10 +8,17 @@ CREATE TABLE IF NOT EXISTS system_users (
   created_at TIMESTAMP DEFAULT NOW()
 );
 
+CREATE TABLE IF NOT EXISTS user_devices (
+  user_id   INTEGER NOT NULL REFERENCES system_users(id) ON DELETE CASCADE,
+  device_id TEXT    NOT NULL,
+  PRIMARY KEY (user_id, device_id)
+);
+
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'iot_user') THEN
     GRANT ALL PRIVILEGES ON TABLE system_users TO iot_user;
     GRANT USAGE, SELECT ON SEQUENCE system_users_id_seq TO iot_user;
+    GRANT ALL PRIVILEGES ON TABLE user_devices TO iot_user;
   END IF;
 END $$;

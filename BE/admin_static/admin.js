@@ -64,6 +64,19 @@
     btnLogout.addEventListener('click', doLogout);
 
     bar.appendChild(rolePill);
+    if (isAdmin()) {
+      var btnCreateUser = document.createElement('button');
+      btnCreateUser.className = 'btn-refresh';
+      btnCreateUser.textContent = '➕ Tạo User';
+      btnCreateUser.addEventListener('click', openCreateUserModal);
+      bar.appendChild(btnCreateUser);
+
+      var btnAssign = document.createElement('button');
+      btnAssign.className = 'btn-refresh';
+      btnAssign.textContent = '👥 Phân quyền';
+      btnAssign.addEventListener('click', openAssignModal);
+      bar.appendChild(btnAssign);
+    }
     bar.appendChild(btnLogout);
     headerRight.insertBefore(bar, headerRight.firstChild);
   }
@@ -158,6 +171,10 @@
   function fmtValue(v) {
     return (v !== null && v !== undefined && v !== "") ? v : "—";
   }
+
+  function fmtTemp(v) { var n = parseFloat(v); return isNaN(n) ? "—" : n.toFixed(2) + "\u00B0C"; }
+  function fmtHumi(v) { var n = parseFloat(v); return isNaN(n) ? "—" : (n >= 99.95 ? "100" : n.toFixed(2)) + "%"; }
+  function fmtSoil(v) { var n = parseFloat(v); if (isNaN(n)) return "—"; var s = Math.round(n); return (s < 10 ? "0" + s : "" + s) + "%"; }
 
   function displayName(deviceId) {
     return deviceId || "Unknown";
@@ -385,15 +402,15 @@
       '<div class="sensor-row">' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Nhiệt độ</span>' +
-          '<span class="sensor-value js-val-temp ' + tempColorClass(device.temperature) + '">' + escapeHtml(fmtValue(device.temperature)) + '</span>' +
+          '<span class="sensor-value js-val-temp ' + tempColorClass(device.temperature) + '">' + escapeHtml(fmtTemp(device.temperature)) + '</span>' +
         '</div>' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Độ ẩm KK</span>' +
-          '<span class="sensor-value js-val-humi ' + humiColorClass(device.humidity) + '">' + escapeHtml(fmtValue(device.humidity)) + '</span>' +
+          '<span class="sensor-value js-val-humi ' + humiColorClass(device.humidity) + '">' + escapeHtml(fmtHumi(device.humidity)) + '</span>' +
         '</div>' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Độ ẩm đất</span>' +
-          '<span class="sensor-value js-val-soil ' + soilColorClass(device.soil_moisture) + '">' + escapeHtml(fmtValue(device.soil_moisture)) + '</span>' +
+          '<span class="sensor-value js-val-soil ' + soilColorClass(device.soil_moisture) + '">' + escapeHtml(fmtSoil(device.soil_moisture)) + '</span>' +
         '</div>' +
       '</div>' +
       '<div class="card-footer">' +
@@ -587,6 +604,8 @@
   loadCurrentUser(function () {
     fetchDevices();
     setInterval(fetchDevices, 5000);
+    pollAccessRequests();
+    setInterval(pollAccessRequests, 3000);
   });
 
   // ─── Device Login Modal (User) ─────────────
@@ -762,6 +781,8 @@
     setPasswordMsg.textContent     = "";
     setPasswordMsg.className       = "login-msg";
 
+    stopAccessPoll();
+    loginSubmitBtn.disabled          = false;
     loginSection.style.display       = "";
     setPasswordSection.style.display = "none";
 
@@ -770,6 +791,7 @@
   }
 
   function closeDeviceLoginModal() {
+    stopAccessPoll();
     loginModal.style.display = "none";
   }
 
@@ -785,11 +807,6 @@
 
   loginSubmitBtn.addEventListener("click", function () {
     var pass = loginPasswordInput.value.trim();
-    if (!pass) {
-      loginMsg.textContent = "Vui lòng nhập mật khẩu.";
-      loginMsg.className   = "login-msg error";
-      return;
-    }
 
     loginSubmitBtn.disabled = true;
     loginMsg.textContent    = "Đang xác thực...";
@@ -804,15 +821,9 @@
       .then(function (data) {
         loginSubmitBtn.disabled = false;
 
-        // Device has no password → User can access directly
+        // Device has no password → gửi yêu cầu, chờ Admin duyệt
         if (data.reason === "no_password") {
-          loginMsg.textContent = "Thành công! Đang chuyển hướng...";
-          loginMsg.className   = "login-msg success";
-          setTimeout(function () {
-            var _now = new Date();
-            var _pad = function(n) { return n < 10 ? "0" + n : "" + n; };
-            window.location.href = loginTargetUrl + "?session_start=" + _pad(_now.getHours()) + ":" + _pad(_now.getMinutes()) + ":" + _pad(_now.getSeconds());
-          }, 500);
+          startAccessRequest();
           return;
         }
 
@@ -825,7 +836,7 @@
             window.location.href = loginTargetUrl + "?session_start=" + _pad(_now.getHours()) + ":" + _pad(_now.getMinutes()) + ":" + _pad(_now.getSeconds());
           }, 500);
         } else {
-          loginMsg.textContent = "Mật khẩu không đúng.";
+          loginMsg.textContent = pass ? "Mật khẩu không đúng." : "Vui lòng nhập mật khẩu.";
           loginMsg.className   = "login-msg error";
           loginPasswordInput.select();
         }
@@ -874,6 +885,291 @@
         setPasswordBtn.disabled    = false;
         setPasswordMsg.textContent = "Lỗi kết nối, thử lại.";
         setPasswordMsg.className   = "login-msg error";
+      });
+  });
+
+  // ─── Access request: phía User (chờ duyệt) ──────────
+  var accessPollTimer = null;
+
+  function stopAccessPoll() {
+    if (accessPollTimer) { clearInterval(accessPollTimer); accessPollTimer = null; }
+  }
+
+  function startAccessRequest() {
+    loginSubmitBtn.disabled = true;
+    loginMsg.textContent    = "Thiết bị chưa có mật khẩu. Đang gửi yêu cầu đến Admin...";
+    loginMsg.className      = "login-msg";
+
+    fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/access-request", { method: "POST" })
+      .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
+      .then(function (res) {
+        if (!res.ok) {
+          loginSubmitBtn.disabled = false;
+          loginMsg.textContent    = res.data.error || "Gửi yêu cầu thất bại.";
+          loginMsg.className      = "login-msg error";
+          return;
+        }
+        loginMsg.textContent = "Đã gửi yêu cầu. Đang chờ Admin chấp nhận...";
+        var reqId = res.data.id;
+        stopAccessPoll();
+        accessPollTimer = setInterval(function () {
+          fetch("/admin/api/access-requests/" + encodeURIComponent(reqId) + "/status")
+            .then(function (r) { return r.json(); })
+            .then(function (s) {
+              if (s.status === "pending") return;
+              stopAccessPoll();
+              loginSubmitBtn.disabled = false;
+              if (s.status === "approved") {
+                loginMsg.textContent = "Admin đã chấp nhận! Đang chuyển hướng...";
+                loginMsg.className   = "login-msg success";
+                setTimeout(function () {
+                  var _now = new Date();
+                  var _pad = function (n) { return n < 10 ? "0" + n : "" + n; };
+                  window.location.href = loginTargetUrl + "?session_start=" + _pad(_now.getHours()) + ":" + _pad(_now.getMinutes()) + ":" + _pad(_now.getSeconds());
+                }, 500);
+              } else if (s.status === "denied") {
+                loginMsg.textContent = "Admin đã từ chối yêu cầu truy cập.";
+                loginMsg.className   = "login-msg error";
+              } else {
+                loginMsg.textContent = "Yêu cầu đã hết hạn. Vui lòng thử lại.";
+                loginMsg.className   = "login-msg error";
+              }
+            })
+            .catch(function () {});
+        }, 2000);
+      })
+      .catch(function () {
+        loginSubmitBtn.disabled = false;
+        loginMsg.textContent    = "Lỗi kết nối, thử lại.";
+        loginMsg.className      = "login-msg error";
+      });
+  }
+
+  // ─── Access request: phía Admin (duyệt) ──────────
+  function renderAccessRequests(list) {
+    var bar = document.getElementById("accessRequestBar");
+    if (!bar) {
+      bar = document.createElement("div");
+      bar.id = "accessRequestBar";
+      var title = document.querySelector(".section-title");
+      if (title && title.parentNode) title.parentNode.insertBefore(bar, title);
+    }
+    bar.innerHTML = "";
+    (list || []).forEach(function (r) {
+      var row = document.createElement("div");
+      row.className = "action-bar";
+      row.innerHTML =
+        '<span class="selected-count">🔔 <strong>' + escapeHtml(r.username) +
+        '</strong> xin truy cập thiết bị <strong>' + escapeHtml(r.deviceId) + '</strong></span>' +
+        '<div class="action-bar-right">' +
+          '<button class="btn-action" data-act="approve">✓ Chấp nhận</button>' +
+          '<button class="btn-action btn-delete-bulk" data-act="deny">✕ Từ chối</button>' +
+        '</div>';
+      row.querySelector('[data-act="approve"]').addEventListener("click", function () {
+        decideAccessRequest(r.id, true);
+      });
+      row.querySelector('[data-act="deny"]').addEventListener("click", function () {
+        decideAccessRequest(r.id, false);
+      });
+      bar.appendChild(row);
+    });
+  }
+
+  function pollAccessRequests() {
+    if (!isAdmin()) return;
+    fetch("/admin/api/access-requests")
+      .then(function (r) { return r.ok ? r.json() : []; })
+      .then(renderAccessRequests)
+      .catch(function () {});
+  }
+
+  function decideAccessRequest(id, approve) {
+    fetch("/admin/api/access-requests/" + encodeURIComponent(id) + "/decision", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approve: approve })
+    })
+      .then(pollAccessRequests)
+      .catch(pollAccessRequests);
+  }
+
+  // ─── Assign devices to users (Admin) ──────────
+  var assignModal      = document.getElementById("assignModal");
+  var assignModalClose = document.getElementById("assignModalClose");
+  var assignUserSelect = document.getElementById("assignUserSelect");
+  var assignDeviceList = document.getElementById("assignDeviceList");
+  var assignSaveBtn    = document.getElementById("assignSaveBtn");
+  var assignMsg        = document.getElementById("assignMsg");
+
+  function setAssignMsg(text, cls) {
+    assignMsg.textContent = text;
+    assignMsg.className = "login-msg" + (cls ? " " + cls : "");
+  }
+
+  function openAssignModal() {
+    if (!isAdmin()) return;
+    setAssignMsg("", "");
+    assignDeviceList.innerHTML = "";
+    assignUserSelect.innerHTML = "";
+    assignModal.style.display = "flex";
+
+    fetch("/admin/api/users")
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(function (users) {
+        var normal = users.filter(function (u) { return u.role === "user"; });
+        if (normal.length === 0) {
+          assignSaveBtn.disabled = true;
+          assignDeviceList.innerHTML = '<div class="assign-empty">Chưa có tài khoản User nào.</div>';
+          return;
+        }
+        assignSaveBtn.disabled = false;
+        normal.forEach(function (u) {
+          var o = document.createElement("option");
+          o.value = u.id;
+          o.textContent = u.username;
+          assignUserSelect.appendChild(o);
+        });
+        loadAssignedDevices();
+      })
+      .catch(function () { setAssignMsg("Không tải được danh sách tài khoản.", "error"); });
+  }
+
+  function loadAssignedDevices() {
+    var uid = assignUserSelect.value;
+    if (!uid) return;
+    setAssignMsg("", "");
+    fetch("/admin/api/users/" + encodeURIComponent(uid) + "/devices")
+      .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
+      .then(function (assigned) {
+        if (assignUserSelect.value !== uid) return;
+        var ids = currentDevices.map(function (d) { return d.device_id; });
+        assigned.forEach(function (id) { if (ids.indexOf(id) === -1) ids.push(id); });
+        assignDeviceList.innerHTML = "";
+        if (ids.length === 0) {
+          assignDeviceList.innerHTML = '<div class="assign-empty">Chưa có thiết bị nào.</div>';
+          return;
+        }
+        ids.forEach(function (id) {
+          var row = document.createElement("label");
+          row.className = "assign-device-item";
+          var cb = document.createElement("input");
+          cb.type = "checkbox";
+          cb.value = id;
+          cb.checked = assigned.indexOf(id) !== -1;
+          var span = document.createElement("span");
+          span.textContent = id;
+          row.appendChild(cb);
+          row.appendChild(span);
+          assignDeviceList.appendChild(row);
+        });
+      })
+      .catch(function () { setAssignMsg("Không tải được danh sách thiết bị.", "error"); });
+  }
+
+  assignUserSelect.addEventListener("change", loadAssignedDevices);
+  assignModalClose.addEventListener("click", function () { assignModal.style.display = "none"; });
+  assignModal.addEventListener("click", function (e) {
+    if (e.target === assignModal) assignModal.style.display = "none";
+  });
+
+  assignSaveBtn.addEventListener("click", function () {
+    var uid = assignUserSelect.value;
+    if (!uid) return;
+    var devices = [];
+    assignDeviceList.querySelectorAll("input[type=checkbox]").forEach(function (cb) {
+      if (cb.checked) devices.push(cb.value);
+    });
+    assignSaveBtn.disabled = true;
+    setAssignMsg("Đang lưu...", "");
+    fetch("/admin/api/users/" + encodeURIComponent(uid) + "/devices", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ devices: devices })
+    })
+      .then(function (r) {
+        assignSaveBtn.disabled = false;
+        if (r.ok) setAssignMsg("✓ Đã lưu phân quyền.", "success");
+        else setAssignMsg("Lưu thất bại, vui lòng thử lại.", "error");
+      })
+      .catch(function () {
+        assignSaveBtn.disabled = false;
+        setAssignMsg("Lỗi kết nối, thử lại.", "error");
+      });
+  });
+
+  // ─── Create User (Admin) ──────────
+  var createUserModal       = document.getElementById("createUserModal");
+  var createUserModalClose  = document.getElementById("createUserModalClose");
+  var createUserNameInput   = document.getElementById("createUserName");
+  var createUserPassInput   = document.getElementById("createUserPassword");
+  var createUserSubmitBtn   = document.getElementById("createUserSubmitBtn");
+  var createUserMsg         = document.getElementById("createUserMsg");
+
+  function setCreateUserMsg(text, cls) {
+    createUserMsg.textContent = text;
+    createUserMsg.className = "login-msg" + (cls ? " " + cls : "");
+  }
+
+  function openCreateUserModal() {
+    if (!isAdmin()) return;
+    createUserNameInput.value = "";
+    createUserPassInput.value = "";
+    setCreateUserMsg("", "");
+    createUserModal.style.display = "flex";
+    setTimeout(function () { createUserNameInput.focus(); }, 80);
+  }
+
+  function closeCreateUserModal() {
+    createUserModal.style.display = "none";
+  }
+
+  createUserModalClose.addEventListener("click", closeCreateUserModal);
+  createUserModal.addEventListener("click", function (e) {
+    if (e.target === createUserModal) closeCreateUserModal();
+  });
+  createUserPassInput.addEventListener("keydown", function (e) {
+    if (e.key === "Enter") createUserSubmitBtn.click();
+  });
+
+  createUserSubmitBtn.addEventListener("click", function () {
+    if (!isAdmin()) return;
+    var username = createUserNameInput.value.trim();
+    var password = createUserPassInput.value;
+    if (!username || !password) {
+      setCreateUserMsg("Vui lòng nhập tên đăng nhập và mật khẩu.", "error");
+      return;
+    }
+    if (password.length < 6) {
+      setCreateUserMsg("Mật khẩu phải có ít nhất 6 ký tự.", "error");
+      return;
+    }
+
+    createUserSubmitBtn.disabled = true;
+    setCreateUserMsg("Đang tạo...", "");
+
+    fetch("/admin/api/users", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username: username, password: password, role: "user" })
+    })
+      .then(function (r) {
+        createUserSubmitBtn.disabled = false;
+        if (r.ok) {
+          setCreateUserMsg("✓ Đã tạo tài khoản \"" + username + "\".", "success");
+          createUserNameInput.value = "";
+          createUserPassInput.value = "";
+          createUserNameInput.focus();
+          return;
+        }
+        return r.json().then(function (data) {
+          setCreateUserMsg(data.error || "Tạo tài khoản thất bại.", "error");
+        }).catch(function () {
+          setCreateUserMsg("Tạo tài khoản thất bại.", "error");
+        });
+      })
+      .catch(function () {
+        createUserSubmitBtn.disabled = false;
+        setCreateUserMsg("Lỗi kết nối, thử lại.", "error");
       });
   });
 

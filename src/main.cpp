@@ -18,7 +18,7 @@ void setup()
 {
   Serial.begin(115200);
   serialLogInit();
-  esp_log_level_set("*", ESP_LOG_NONE);
+  esp_log_level_set("*", ESP_LOG_WARN);
   esp_log_level_set("vfs_api", ESP_LOG_NONE);
   check_info_File(0);
 

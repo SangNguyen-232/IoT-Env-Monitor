@@ -19,7 +19,6 @@
     soil: document.getElementById("statSoil"),
     time: document.getElementById("statTime"),
     message: document.getElementById("statMessage"),
-    coreiotDot: document.getElementById("coreiotDot"),
     pumpBadge: document.getElementById("pumpBadge"),
     modeBadge: document.getElementById("modeBadge"),
     pumpToggleBtn: document.getElementById("pumpToggleBtn"),
@@ -410,13 +409,11 @@
     };
   }
 
-  // ---------- Status pill (CoreIoT / MQTT) ----------
+  // ---------- Status poll (AP mode overlay) ----------
   function pollStatus() {
     fetch("/api/status")
       .then(function (r) { return r.json(); })
       .then(function (s) {
-        els.coreiotDot.className = "dot " + (s.mqtt_connected ? "online" : "offline");
-
         var apOverlay = document.getElementById("apModeOverlay");
         if (apOverlay) {
           if (s.is_ap_mode) {
@@ -426,9 +423,7 @@
           }
         }
       })
-      .catch(function () {
-        els.coreiotDot.className = "dot offline";
-      });
+      .catch(function () {});
   }
 
   // ---------- Toggle buttons ----------

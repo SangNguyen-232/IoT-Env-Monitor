@@ -174,6 +174,8 @@ void tiny_ml_task(void *pvParameters)
         {
             strncpy(ctx->mlStatus, is_safety_triggered ? "Critical" : status, sizeof(ctx->mlStatus) - 1);
             ctx->mlStatus[sizeof(ctx->mlStatus) - 1] = '\0';
+            // NOTE: roll_acc = % số lần model khớp với risk_pure_mathematical_label() (rule dùng để sinh nhãn train),
+            // KHÔNG phải độ chính xác phát hiện bất thường trên dữ liệu thực.
             ctx->mlRollAcc = inferences ? (100.0f * (float)correct / (float)inferences) : 0.0f;
             xSemaphoreGive(ctx->mutexContext);
         }

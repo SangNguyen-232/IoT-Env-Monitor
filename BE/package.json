@@ -12,8 +12,10 @@
   "type": "commonjs",
   "dependencies": {
     "bcryptjs": "^3.0.3",
+    "connect-pg-simple": "^10.0.0",
     "express": "^5.2.1",
     "express-session": "^1.19.0",
+    "helmet": "^8.1.0",
     "pg": "^8.22.0"
   }
 }

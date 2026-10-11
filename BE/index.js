@@ -1,6 +1,8 @@
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');
+const pgSession = require('connect-pg-simple')(session);
+const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const path = require('path');
@@ -41,10 +43,23 @@ if (!sensorApiKey) {
 }
 
 const app = express();
+// CSP tắt vì admin.html / login.html dùng script/style inline và cần ws:// tới ESP32
+app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '32kb' }));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
 
+const pool = new Pool({
+  host:     process.env.DB_HOST     || 'localhost',
+  database: process.env.DB_NAME     || 'iot_db',
+  user:     process.env.DB_USER     || 'iot_user',
+  password: process.env.DB_PASS,
+  port:     parseInt(process.env.DB_PORT || '5432', 10),
+});
+
+pool.on('error', (err) => console.error('Unexpected PG pool error:', err));
+
 app.use(session({
+  store: new pgSession({ pool, createTableIfMissing: true }),
   secret: sessionSecret,
   resave: false,
   saveUninitialized: false,
@@ -55,14 +70,6 @@ app.use(session({
     maxAge: 8 * 60 * 60 * 1000
   }
 }));
-
-const pool = new Pool({
-  host:     process.env.DB_HOST     || 'localhost',
-  database: process.env.DB_NAME     || 'iot_db',
-  user:     process.env.DB_USER     || 'iot_user',
-  password: process.env.DB_PASS,
-  port:     parseInt(process.env.DB_PORT || '5432', 10),
-});
 
 function isBcryptHash(value) {
   return typeof value === 'string' && /^\$2[aby]\$/.test(value);
@@ -156,6 +163,23 @@ function sanitizeLanIp(ip) {
   return trimmed;
 }
 
+function toNum(v) {
+  if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+  if (typeof v !== 'string') return null;
+  const n = parseFloat(v);
+  return Number.isFinite(n) ? n : null;
+}
+
+async function userCanAccessDevice(req, deviceId) {
+  const u = req.session.user;
+  if (u.role === 'admin') return true;
+  const r = await pool.query(
+    'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2',
+    [u.id, deviceId]
+  );
+  return r.rowCount > 0;
+}
+
 async function seedAdminIfEmpty() {
   const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM system_users');
   if (rows[0].n > 0) return;
@@ -172,13 +196,52 @@ async function seedAdminIfEmpty() {
   console.log(`Seeded admin user "${username.trim()}".`);
 }
 
+const RETENTION_DAYS = parseInt(process.env.SENSOR_RETENTION_DAYS || '30', 10);
+
+async function purgeOldLogs() {
+  if (!(RETENTION_DAYS > 0)) return;
+  try {
+    const r = await pool.query(
+      `DELETE FROM sensor_logs WHERE COALESCE(received_at, timestamp_up) < NOW() - make_interval(days => $1::int)`,
+      [RETENTION_DAYS]
+    );
+    if (r.rowCount) console.log(`Purged ${r.rowCount} sensor_logs older than ${RETENTION_DAYS} days.`);
+  } catch (err) {
+    console.error('purgeOldLogs failed:', err);
+  }
+}
+
 async function ensureSchema() {
   await pool.query(`ALTER TABLE sensor_logs ADD COLUMN IF NOT EXISTS received_at timestamptz DEFAULT NOW()`);
   await pool.query(`ALTER TABLE sensor_logs ADD COLUMN IF NOT EXISTS lan_ip text`);
+  await pool.query(`
+    DO $$
+    DECLARE c text;
+    BEGIN
+      FOREACH c IN ARRAY ARRAY['temperature','humidity','soil_moisture'] LOOP
+        IF (SELECT data_type FROM information_schema.columns
+            WHERE table_name = 'sensor_logs' AND column_name = c) = 'text' THEN
+          EXECUTE format(
+            'ALTER TABLE sensor_logs ALTER COLUMN %I TYPE double precision USING NULLIF(substring(%I from ''-?[0-9]+\\.?[0-9]*''), '''')::double precision',
+            c, c);
+        END IF;
+      END LOOP;
+    END $$;
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_received ON sensor_logs (device_id, received_at DESC)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_up ON sensor_logs (device_id, timestamp_up DESC)`);
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_devices (
+      user_id   integer NOT NULL REFERENCES system_users(id) ON DELETE CASCADE,
+      device_id text    NOT NULL,
+      PRIMARY KEY (user_id, device_id)
+    )
+  `);
 }
 
 ensureSchema()
   .then(() => seedAdminIfEmpty())
+  .then(() => { purgeOldLogs(); setInterval(purgeOldLogs, 6 * 60 * 60 * 1000); })
   .catch((err) => {
     console.error('Failed to initialize schema/admin:', err);
   });
@@ -279,7 +342,7 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
        VALUES ($1,$2,NOW(),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         timestamp_real === 'null' ? null : timestamp_real,
-        timestamp_up, temperature, humidity, soil_moisture,
+        timestamp_up, toNum(temperature), toNum(humidity), toNum(soil_moisture),
         PUMP_state, MODE_state, safeMessage, Score,
         safeDeviceId,
         safeLanIp,
@@ -304,8 +367,9 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
         timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_up,
         COALESCE(received_at, timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh' AS received_at
       FROM sensor_logs
+      WHERE $1::boolean OR device_id IN (SELECT device_id FROM user_devices WHERE user_id = $2)
       ORDER BY device_id, COALESCE(received_at, timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') DESC
-    `);
+    `, [req.session.user.role === 'admin', req.session.user.id]);
     res.json(result.rows);
   } catch (err) {
     console.error(err);
@@ -316,6 +380,9 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
 app.get('/admin/api/devices/:device_id/history', requireLogin, async (req, res) => {
   try {
     const { device_id } = req.params;
+    if (!(await userCanAccessDevice(req, device_id))) {
+      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+    }
     const limit = Math.min(parseInt(req.query.limit) || 60, 200);
     const result = await pool.query(`
       SELECT temperature, humidity, soil_moisture,
@@ -348,12 +415,16 @@ app.delete('/admin/api/devices/:device_id', requireLogin, requireAdmin, async (r
 app.post('/admin/api/devices/:device_id/verify', requireLogin, rateLimitLogin, async (req, res) => {
   try {
     const { device_id } = req.params;
+    if (!(await userCanAccessDevice(req, device_id))) {
+      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+    }
     const { password } = req.body;
     const result = await pool.query(
       'SELECT password FROM device_credentials WHERE device_id = $1',
       [device_id]
     );
     if (result.rows.length === 0) return res.json({ ok: false, reason: 'no_password' });
+    if (!password) return res.json({ ok: false });
     const check = await verifyPassword(password, result.rows[0].password);
     if (!check.ok) {
       recordLoginFailure(req);
@@ -371,6 +442,78 @@ app.post('/admin/api/devices/:device_id/verify', requireLogin, rateLimitLogin, a
     console.error(err);
     res.status(500).json({ error: err.message });
   }
+});
+
+// ─── Access requests (in-memory): User xin vào thiết bị chưa có mật khẩu ───
+const ACCESS_REQ_PENDING_TTL_MS = 5 * 60 * 1000;
+const ACCESS_REQ_DECIDED_TTL_MS = 2 * 60 * 1000;
+const accessRequests = new Map();
+
+function pruneAccessRequests() {
+  const now = Date.now();
+  for (const [id, r] of accessRequests) {
+    const ttl = r.status === 'pending' ? ACCESS_REQ_PENDING_TTL_MS : ACCESS_REQ_DECIDED_TTL_MS;
+    if (now - r.updatedAt > ttl) accessRequests.delete(id);
+  }
+}
+
+app.post('/admin/api/devices/:device_id/access-request', requireLogin, async (req, res) => {
+  try {
+    const { device_id } = req.params;
+    const u = req.session.user;
+    if (u.role === 'admin') {
+      return res.status(400).json({ error: 'Admin không cần gửi yêu cầu.' });
+    }
+    if (!(await userCanAccessDevice(req, device_id))) {
+      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+    }
+    const has = await pool.query('SELECT 1 FROM device_credentials WHERE device_id = $1', [device_id]);
+    if (has.rowCount > 0) {
+      return res.status(400).json({ error: 'Thiết bị đã có mật khẩu.' });
+    }
+    pruneAccessRequests();
+    for (const r of accessRequests.values()) {
+      if (r.userId === u.id && r.deviceId === device_id && r.status === 'pending') {
+        return res.json({ id: r.id, status: r.status });
+      }
+    }
+    const id = crypto.randomBytes(8).toString('hex');
+    accessRequests.set(id, {
+      id, userId: u.id, username: u.username, deviceId: device_id,
+      status: 'pending', updatedAt: Date.now()
+    });
+    res.json({ id, status: 'pending' });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/admin/api/access-requests/:id/status', requireLogin, (req, res) => {
+  pruneAccessRequests();
+  const r = accessRequests.get(req.params.id);
+  if (!r || r.userId !== req.session.user.id) return res.json({ status: 'expired' });
+  res.json({ status: r.status });
+});
+
+app.get('/admin/api/access-requests', requireLogin, requireAdmin, (req, res) => {
+  pruneAccessRequests();
+  res.json(
+    [...accessRequests.values()]
+      .filter((r) => r.status === 'pending')
+      .map((r) => ({ id: r.id, username: r.username, deviceId: r.deviceId }))
+  );
+});
+
+app.post('/admin/api/access-requests/:id/decision', requireLogin, requireAdmin, (req, res) => {
+  pruneAccessRequests();
+  const r = accessRequests.get(req.params.id);
+  if (!r || r.status !== 'pending') {
+    return res.status(404).json({ error: 'Yêu cầu không còn hiệu lực.' });
+  }
+  r.status = (req.body && req.body.approve === true) ? 'approved' : 'denied';
+  r.updatedAt = Date.now();
+  res.sendStatus(200);
 });
 
 app.get('/admin/api/devices/:device_id/has-password', requireLogin, requireAdmin, async (req, res) => {
@@ -461,6 +604,52 @@ app.delete('/admin/api/users/:id', requireLogin, requireAdmin, async (req, res) 
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, res) => {
+  try {
+    const r = await pool.query(
+      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY device_id',
+      [req.params.id]
+    );
+    res.json(r.rows.map((x) => x.device_id));
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, res) => {
+  const userId = parseInt(req.params.id, 10);
+  const list = (req.body || {}).devices;
+  if (!Number.isInteger(userId) || !Array.isArray(list)) {
+    return res.status(400).json({ error: 'Dữ liệu không hợp lệ.' });
+  }
+  const ids = [...new Set(list.map((d) => sanitizeDeviceId(d)).filter(Boolean))];
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const u = await client.query('SELECT 1 FROM system_users WHERE id = $1', [userId]);
+    if (u.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Không tìm thấy tài khoản.' });
+    }
+    await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
+    if (ids.length) {
+      await client.query(
+        'INSERT INTO user_devices (user_id, device_id) SELECT $1, unnest($2::text[])',
+        [userId, ids]
+      );
+    }
+    await client.query('COMMIT');
+    res.sendStatus(200);
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch (e) {}
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
   }
 });
 
