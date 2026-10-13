@@ -20,9 +20,9 @@
     --purple:   #b06af7;
     --radius:   14px;
   }
-
+ 
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+ 
   html, body {
     min-height: 100vh;
     background: var(--bg);
@@ -32,7 +32,7 @@
     align-items: center;
     justify-content: center;
   }
-
+ 
   /* ── Decorative dotted grid background ── */
   body::before {
     content: '';
@@ -42,7 +42,7 @@
     background-size: 32px 32px;
     pointer-events: none;
   }
-
+ 
   .login-wrap {
     width: 100%;
     max-width: 380px;
@@ -50,7 +50,7 @@
     position: relative;
     z-index: 1;
   }
-
+ 
   /* ── Brand ── */
   .brand {
     display: flex;
@@ -59,7 +59,7 @@
     gap: 10px;
     margin-bottom: 32px;
   }
-
+ 
   .brand-mark {
     width: 36px;
     height: 36px;
@@ -73,13 +73,13 @@
     color: #fff;
     flex-shrink: 0;
   }
-
+ 
   .brand-name {
     font-size: 18px;
     font-weight: 700;
     letter-spacing: -0.02em;
   }
-
+ 
   /* ── Card ── */
   .login-card {
     background: var(--card);
@@ -87,19 +87,19 @@
     border-radius: var(--radius);
     padding: 28px 28px 24px;
   }
-
+ 
   .login-title {
     font-size: 17px;
     font-weight: 700;
     margin-bottom: 4px;
   }
-
+ 
   .login-sub {
     font-size: 13px;
     color: var(--muted);
     margin-bottom: 24px;
   }
-
+ 
   /* ── Form ── */
   .field {
     display: flex;
@@ -107,7 +107,7 @@
     gap: 6px;
     margin-bottom: 14px;
   }
-
+ 
   .field label {
     font-size: 12px;
     font-weight: 600;
@@ -115,7 +115,7 @@
     letter-spacing: 0.04em;
     text-transform: uppercase;
   }
-
+ 
   .field input {
     padding: 10px 12px;
     border-radius: 9px;
@@ -126,26 +126,26 @@
     outline: none;
     transition: border-color 0.15s, box-shadow 0.15s;
   }
-
+ 
   .field input:focus {
     border-color: var(--accent);
     box-shadow: 0 0 0 3px rgba(59,109,240,0.18);
   }
-
+ 
   .field input::placeholder { color: var(--muted); }
-
+ 
   /* ── Password show/hide wrapper ── */
   .pwd-wrap {
     position: relative;
     display: flex;
     align-items: center;
   }
-
+ 
   .pwd-wrap input {
     width: 100%;
     padding-right: 38px;
   }
-
+ 
   .btn-eye {
     position: absolute;
     right: 10px;
@@ -159,10 +159,10 @@
     line-height: 1;
     transition: color 0.15s;
   }
-
+ 
   .btn-eye:hover { color: var(--text); }
   .btn-eye svg { width: 16px; height: 16px; }
-
+ 
   /* ── Button ── */
   .btn-login {
     width: 100%;
@@ -181,11 +181,11 @@
     justify-content: center;
     gap: 8px;
   }
-
+ 
   .btn-login:hover  { background: var(--accent-h); }
   .btn-login:active { transform: translateY(1px); }
   .btn-login:disabled { opacity: 0.6; cursor: not-allowed; }
-
+ 
   /* ── Small button spinner ── */
   @keyframes spin { to { transform: rotate(360deg); } }
   .btn-spinner {
@@ -199,7 +199,7 @@
   }
   .btn-login.loading .btn-spinner { display: block; }
   .btn-login.loading .btn-text   { opacity: 0.7; }
-
+ 
   /* ── Error message ── */
   .login-err {
     display: none;
@@ -211,9 +211,9 @@
     font-size: 13px;
     color: var(--red);
   }
-
+ 
   .login-err.show { display: block; }
-
+ 
   /* ── Success message ── */
   .login-ok {
     display: none;
@@ -225,9 +225,9 @@
     font-size: 13px;
     color: var(--green);
   }
-
+ 
   .login-ok.show { display: block; }
-
+ 
   /* ── Switch link ── */
   .switch-link {
     text-align: center;
@@ -235,7 +235,7 @@
     font-size: 13px;
     color: var(--muted);
   }
-
+ 
   .switch-link button {
     background: none;
     border: none;
@@ -246,9 +246,9 @@
     padding: 0;
     text-decoration: underline;
   }
-
+ 
   .switch-link button:hover { color: var(--accent-h); }
-
+ 
   /* ── Footer note ── */
   .login-note {
     text-align: center;
@@ -256,26 +256,34 @@
     color: var(--muted);
     margin-top: 20px;
   }
+ 
+  /* ── Responsive ── */
+  html, body { min-height: 100dvh; }
+ 
+  @media (max-width: 480px) {
+    .login-card { padding: 22px 18px 20px; }
+    .field input { font-size: 16px; }
+  }
 </style>
 </head>
 <body>
-
+ 
 <div class="login-wrap">
-
+ 
   <div class="brand">
     <span class="brand-mark">E</span>
     <span class="brand-name">ESP32 IoT</span>
   </div>
-
+ 
   <div class="login-card">
     <div class="login-title" id="cardTitle">Đăng nhập hệ thống</div>
     <div class="login-sub" id="cardSub">Nhập tài khoản được cấp để tiếp tục</div>
-
+ 
     <div class="field">
       <label for="username">Tên đăng nhập</label>
       <input type="text" id="username" placeholder="username" autocomplete="username" autofocus />
     </div>
-
+ 
     <div class="field">
       <label for="password">Mật khẩu</label>
       <div class="pwd-wrap">
@@ -285,20 +293,20 @@
         </button>
       </div>
     </div>
-
+ 
     <button class="btn-login" id="btnSubmit">
       <span class="btn-spinner"></span>
       <span class="btn-text">Đăng nhập</span>
     </button>
-
+ 
     <div class="login-err" id="loginErr"></div>
     <div class="login-ok" id="loginOk"></div>
   </div>
-
+ 
   <div class="login-note">Tài khoản do quản trị viên cấp. Đăng ký công khai đã tắt.</div>
-
+ 
 </div>
-
+ 
 <script>
 (function () {
   var usernameEl      = document.getElementById('username');
@@ -306,35 +314,35 @@
   var btnSubmit       = document.getElementById('btnSubmit');
   var errEl           = document.getElementById('loginErr');
   var okEl            = document.getElementById('loginOk');
-
+ 
   function setError(msg) {
     errEl.textContent = msg;
     errEl.classList.add('show');
     okEl.classList.remove('show');
   }
-
+ 
   function clearMessages() {
     errEl.classList.remove('show');
     okEl.classList.remove('show');
   }
-
+ 
   function setLoading(on) {
     btnSubmit.disabled = on;
     btnSubmit.classList.toggle('loading', on);
   }
-
+ 
   function doLogin() {
     clearMessages();
     var username = usernameEl.value.trim();
     var password = passwordEl.value;
-
+ 
     if (!username || !password) {
       setError('Vui lòng nhập tên đăng nhập và mật khẩu.');
       return;
     }
-
+ 
     setLoading(true);
-
+ 
     fetch('/login', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -356,18 +364,18 @@
         setError('Không kết nối được server. Thử lại sau.');
       });
   }
-
+ 
   btnSubmit.addEventListener('click', doLogin);
-
+ 
   [usernameEl, passwordEl].forEach(function (el) {
     el.addEventListener('keydown', function (e) {
       if (e.key === 'Enter') btnSubmit.click();
     });
   });
-
+ 
   var EYE_SHOW = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
   var EYE_HIDE = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><line x1="1" y1="1" x2="23" y2="23"/></svg>';
-
+ 
   document.querySelectorAll('.btn-eye').forEach(function (btn) {
     btn.addEventListener('click', function () {
       var input = document.getElementById(btn.getAttribute('data-target'));

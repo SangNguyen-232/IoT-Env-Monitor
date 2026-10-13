@@ -1,9 +1,9 @@
 #ifndef RISK_LABEL_H
 #define RISK_LABEL_H
-
+ 
 #include <math.h>
 #include <algorithm>
-
+ 
 // --- 1. FUNCTIONS TO DETERMINE LED AND NEOPIXEL CONTROL STATES ---
 static inline int risk_led_state_from_temperature(float t)
 {
@@ -13,7 +13,7 @@ static inline int risk_led_state_from_temperature(float t)
         return 2; // Warning
     return 1;     // Normal
 }
-
+ 
 static inline int risk_neo_state_from_humidity(float h)
 {
     if (h < 50.0f || h > 80.0f)
@@ -22,7 +22,7 @@ static inline int risk_neo_state_from_humidity(float h)
         return 2; // Warning
     return 1;     // Normal
 }
-
+ 
 static inline int risk_soil_state_from_moisture(float s)
 {
     if (s < 25.0f || s > 45.0f)
@@ -31,7 +31,7 @@ static inline int risk_soil_state_from_moisture(float s)
         return 2; // Warning
     return 1;     // Normal
 }
-
+ 
 // --- 2. PIECEWISE LINEAR PENALTY ALGORITHM FOR TINYML ---
 static inline float calc_penalty_temp(float t) {
     if (t >= 15.0f && t <= 25.0f) {
@@ -48,7 +48,7 @@ static inline float calc_penalty_temp(float t) {
     }
     return 5.0f + 5.0f * std::min((t - 30.0f) / 10.0f, 1.0f);
 }
-
+ 
 static inline float calc_penalty_humi(float h) {
     if (h >= 60.0f && h <= 70.0f) {
         return 0.0f; // Optimal (Normal)
@@ -64,7 +64,7 @@ static inline float calc_penalty_humi(float h) {
     }
     return 5.0f + 5.0f * std::min((h - 80.0f) / 15.0f, 1.0f);
 }
-
+ 
 static inline float calc_penalty_soil(float s) {
     if (s >= 30.0f && s <= 40.0f) {
         return 0.0f; // Optimal (Normal)
@@ -80,7 +80,7 @@ static inline float calc_penalty_soil(float s) {
     }
     return 5.0f + 5.0f * std::min((s - 45.0f) / 15.0f, 1.0f);
 }
-
+ 
 // --- 3. ORIGINAL MATHEMATICAL LABEL FUNCTION FOR TINYML BENCHMARKING ---
 static inline int risk_pure_mathematical_label(float temperature, float humidity, float soil_moisture) {
     float r = 0.35f * calc_penalty_temp(temperature) + 
@@ -91,7 +91,7 @@ static inline int risk_pure_mathematical_label(float temperature, float humidity
     if (r <= 6.5f) return 2; // Warning
     return 3;                // Critical
 }
-
+ 
 // --- 4. INTEGRATED SAFETY INTERLOCK FUNCTION FOR HARDWARE PROTECTION ---
 static inline int risk_final_safety_label(float temperature, float humidity, float soil_moisture) {
     if (temperature >= 40.0f || humidity >= 90.0f || soil_moisture < 15.0f || soil_moisture > 60.0f) {
@@ -99,5 +99,5 @@ static inline int risk_final_safety_label(float temperature, float humidity, flo
     }
     return risk_pure_mathematical_label(temperature, humidity, soil_moisture);
 }
-
+ 
 #endif // RISK_LABEL_H

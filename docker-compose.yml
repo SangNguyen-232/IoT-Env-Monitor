@@ -1,5 +1,5 @@
 services:
-
+ 
   # ─── PostgreSQL Database ────────────────────────────────────
   postgres:
     container_name: iot_postgres
@@ -23,7 +23,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
-
+ 
   # ─── Node.js Backend ────────────────────────────────────────
   backend:
     container_name: iot_backend
@@ -56,11 +56,11 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-
+ 
 networks:
   iot_net:
     driver: bridge
-
+ 
 volumes:
   pgdata:
     driver: local

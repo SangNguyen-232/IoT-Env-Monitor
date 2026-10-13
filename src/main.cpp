@@ -1,19 +1,19 @@
 #include "global.h"
 #include "serial_log.h"
 #include "esp_log.h"
-
+ 
 #include "led_blinky.h"
 #include "neo_blinky.h"
 #include "temp_humi_monitor.h"
 #include "tinyml.h"
 #include "task_database.h"
-
+ 
 #include "task_check_info.h"
 #include "task_toogle_boot.h"
 #include "task_wifi.h"
 #include "task_webserver.h"
 #include "pump.h"
-
+ 
 void setup()
 {
   Serial.begin(115200);
@@ -21,7 +21,7 @@ void setup()
   esp_log_level_set("*", ESP_LOG_WARN);
   esp_log_level_set("vfs_api", ESP_LOG_NONE);
   check_info_File(0);
-
+ 
   SharedContext* ctx = new SharedContext();
   ctx->temperature = 0;
   ctx->humidity = 0;
@@ -44,9 +44,9 @@ void setup()
   ctx->semNeoUpdate = xSemaphoreCreateBinary();
   ctx->semLCDUpdate = xSemaphoreCreateBinary();
   ctx->semDBUpdate  = xSemaphoreCreateBinary();
-
+ 
   Webserver_init_ctx(ctx);
-
+ 
   xTaskCreate(led_blinky, "Task LED Blink", 2048, (void*)ctx, 2, NULL);
   xTaskCreate(neo_blinky, "Task NEO Blink", 2048, (void*)ctx, 2, NULL);
   xTaskCreate(temp_humi_monitor, "Task TEMP HUMI Monitor", 2048, (void*)ctx, 2, NULL);
@@ -55,9 +55,10 @@ void setup()
   xTaskCreate(task_database, "Task Database", 16384, (void*)ctx, 2, NULL);
   xTaskCreate(Task_Toogle_BOOT, "Task_Toogle_BOOT", 4096, NULL, 2, NULL);
 }
-
+ 
 void loop()
 {
+  DNS_process();
   if (g_wifiSwitchFlag) {
     g_wifiSwitchFlag = false;
     Wifi_switch_to(g_wifiSwitchSSID, g_wifiSwitchPass);
@@ -70,5 +71,5 @@ void loop()
     }
   }
   Webserver_reconnect();
-  vTaskDelay(pdMS_TO_TICKS(200));
+  vTaskDelay(pdMS_TO_TICKS(30));
 }

@@ -15,16 +15,16 @@ CREATE TABLE IF NOT EXISTS "sensor_logs" (
   "latency" int,
   "trigger_source" text
 );
-
+ 
 CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_received ON sensor_logs (device_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_up ON sensor_logs (device_id, timestamp_up DESC);
-
+ 
 -- password stores a bcrypt hash, never plaintext
 CREATE TABLE IF NOT EXISTS device_credentials (
   device_id text PRIMARY KEY,
   password  text NOT NULL
 );
-
+ 
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'iot_user') THEN

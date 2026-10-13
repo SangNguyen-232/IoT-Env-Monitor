@@ -8,7 +8,7 @@
 </head>
 <body>
 <div class="admin-wrap">
-
+ 
   <!-- Header -->
   <header class="admin-header">
     <h1>
@@ -29,7 +29,7 @@
       </button>
     </div>
   </header>
-
+ 
   <!-- Summary bar -->
   <div class="summary-bar">
     <div class="summary-card">
@@ -45,7 +45,7 @@
         <div class="summary-value" id="sumTotal">—</div>
       </div>
     </div>
-
+ 
     <div class="summary-card">
       <div class="summary-icon icon-online">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -58,7 +58,7 @@
         <div class="summary-value" id="sumOnline">—</div>
       </div>
     </div>
-
+ 
     <div class="summary-card">
       <div class="summary-icon icon-offline">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -72,7 +72,7 @@
         <div class="summary-value" id="sumOffline">—</div>
       </div>
     </div>
-
+ 
     <div class="summary-card">
       <div class="summary-icon icon-time">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -86,7 +86,7 @@
       </div>
     </div>
   </div>
-
+ 
   <!-- Device list -->
   <div class="section-title">Thiết bị</div>
   <div class="device-grid" id="deviceGrid">
@@ -95,9 +95,9 @@
       <span>Đang tải dữ liệu...</span>
     </div>
   </div>
-
+ 
 </div>
-
+ 
 <!-- Device Login Modal -->
 <div id="deviceLoginModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box">
@@ -106,7 +106,7 @@
       <button type="button" id="loginModalClose" class="login-modal-close">&times;</button>
     </div>
     <div class="login-device-id" id="loginDeviceId"></div>
-
+ 
     <!-- Login Area -->
     <div id="loginSection">
       <div class="login-field">
@@ -121,7 +121,7 @@
       <button type="button" class="login-submit-btn" id="loginSubmitBtn">Đăng nhập</button>
       <div class="login-msg" id="loginMsg"></div>
     </div>
-
+ 
     <!-- Set Password Area (when device has no password) -->
     <div id="setPasswordSection" style="display:none;">
       <div class="login-set-title">Thiết bị chưa có mật khẩu. Đặt mật khẩu để bảo vệ quyền truy cập:</div>
@@ -139,7 +139,7 @@
     </div>
   </div>
 </div>
-
+ 
 <!-- Admin Device Management Modal -->
 <div id="adminDeviceModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box admin-modal-box">
@@ -148,15 +148,15 @@
       <button type="button" id="adminModalClose" class="login-modal-close">&times;</button>
     </div>
     <div class="login-device-id" id="adminModalDeviceId"></div>
-
+ 
     <!-- Go to Dashboard -->
     <button type="button" class="login-submit-btn admin-enter-btn" id="adminEnterDashboardBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
       Vào Dashboard
     </button>
-
+ 
     <hr class="login-divider" style="margin-top:14px;" />
-
+ 
     <!-- Set/Change Password -->
     <div class="admin-pwd-section-title" id="adminPwdSectionTitle">Đặt mật khẩu thiết bị</div>
     <div class="login-field" style="margin-top:8px;">
@@ -170,14 +170,14 @@
     </div>
     <button type="button" class="login-submit-btn admin-save-pwd-btn" id="adminSavePasswordBtn">Lưu mật khẩu</button>
     <div class="login-msg" id="adminPwdMsg"></div>
-
+ 
     <!-- Delete Password (shown only when device already has a password) -->
     <div id="adminDeletePwdSection" style="display:none; margin-top:10px;">
       <button type="button" class="admin-delete-pwd-btn" id="adminDeletePasswordBtn">🗑 Xóa mật khẩu thiết bị</button>
     </div>
   </div>
 </div>
-
+ 
 <!-- Assign Devices to Users Modal (Admin only) -->
 <div id="assignModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box assign-modal-box">
@@ -194,7 +194,7 @@
     <div class="login-msg" id="assignMsg"></div>
   </div>
 </div>
-
+ 
 <!-- Create User Modal (Admin only) -->
 <div id="createUserModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box">
@@ -219,7 +219,7 @@
     <div class="login-msg" id="createUserMsg"></div>
   </div>
 </div>
-
+ 
 <script src="./admin.js"></script>
 <script>
 (function () {

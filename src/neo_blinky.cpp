@@ -1,13 +1,13 @@
 #include "neo_blinky.h"
 #include "global.h"
-
+ 
 void neo_blinky(void *pvParameters){
-
+ 
     Adafruit_NeoPixel strip(LED_COUNT, NEO_PIN, NEO_GRB + NEO_KHZ800);
     strip.begin();
     strip.clear();
     strip.show();
-
+ 
     SharedContext* ctx = (SharedContext*)pvParameters;
     
     if (ctx != NULL) {
@@ -20,7 +20,7 @@ void neo_blinky(void *pvParameters){
         else if (state == 3) strip.setPixelColor(0, strip.Color(255, 0, 0)); 
         strip.show();
     }
-
+ 
     while(1) {                          
         if (ctx != NULL) {
             xSemaphoreTake(ctx->semNeoUpdate, portMAX_DELAY);

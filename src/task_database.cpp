@@ -9,13 +9,13 @@
 #include "pump.h"
 #include "secrets.h"
 #include <sys/time.h>
-
+ 
 #define POST_QUEUE_MAX 6
-
+ 
 static String postQueue[POST_QUEUE_MAX];
 static int postQHead = 0;
 static int postQCount = 0;
-
+ 
 static String formatTimestamp(time_t t)
 {
     if (t == 0) return "null";
@@ -25,14 +25,14 @@ static String formatTimestamp(time_t t)
     strftime(buf, sizeof(buf), "%Y-%m-%d %H:%M:%S", &timeinfo);
     return String(buf);
 }
-
+ 
 static const char* ruleStatusLabel(int lcdState)
 {
     if (lcdState == 3) return "Critical";
     if (lcdState == 2) return "Warning";
     return "Normal";
 }
-
+ 
 static String sensorPostUrl()
 {
     String u = g_sensorApiUrl;
@@ -42,7 +42,7 @@ static String sensorPostUrl()
     if (u.endsWith("/")) return u + "sensor";
     return u + "/sensor";
 }
-
+ 
 static void enqueuePost(const String& payload)
 {
     if (postQCount == POST_QUEUE_MAX)
@@ -54,7 +54,7 @@ static void enqueuePost(const String& payload)
     postQueue[idx] = payload;
     postQCount++;
 }
-
+ 
 static void popPost()
 {
     if (postQCount == 0) return;
@@ -62,7 +62,7 @@ static void popPost()
     postQHead = (postQHead + 1) % POST_QUEUE_MAX;
     postQCount--;
 }
-
+ 
 static int postPayload(const String& payload)
 {
     const String dbUrl = sensorPostUrl();
@@ -70,7 +70,7 @@ static int postPayload(const String& payload)
     {
         return -1;
     }
-
+ 
     HTTPClient http;
     int httpCode = -1;
     if (dbUrl.startsWith("https://"))
@@ -85,7 +85,7 @@ static int postPayload(const String& payload)
         http.end();
         return httpCode;
     }
-
+ 
     WiFiClient client;
     if (!http.begin(client, dbUrl)) return -1;
     http.setTimeout(10000);
@@ -95,13 +95,13 @@ static int postPayload(const String& payload)
     http.end();
     return httpCode;
 }
-
+ 
 static void flushPostQueue()
 {
     if (postQCount == 0) return;
     if (WiFi.status() != WL_CONNECTED) return;
     if (sensorPostUrl().isEmpty()) return;
-
+ 
     int flushed = 0;
     while (postQCount > 0 && flushed < 2)
     {
@@ -128,7 +128,7 @@ static void flushPostQueue()
         flushed++;
     }
 }
-
+ 
 static String buildPayload(SharedContext *ctx, const char *triggerSource)
 {
     float temperature = 0.0f;
@@ -140,7 +140,7 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     struct timeval tvUp   = {0, 0};
     String pumpState;
     String modeState;
-
+ 
     if (ctx != NULL && xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(2000)) == pdTRUE)
     {
         temperature    = ctx->temperature;
@@ -152,19 +152,19 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
         tvReal.tv_usec = ctx->timestampRealUs;
         xSemaphoreGive(ctx->mutexContext);
     }
-
+ 
     if (xSemaphoreTake(xMutexPumpControl, pdMS_TO_TICKS(2000)) == pdTRUE)
     {
         pumpState = global_pump_state;
         modeState = global_pump_mode;
         xSemaphoreGive(xMutexPumpControl);
     }
-
+ 
     gettimeofday(&tvUp, nullptr);
-
+ 
     int64_t latencyUs = (((int64_t)tvUp.tv_sec  * 1000000LL + tvUp.tv_usec)
                     - ((int64_t)tvReal.tv_sec * 1000000LL + tvReal.tv_usec));
-
+ 
     // NOTE: "Score" gửi lên DB chính là mlRollAcc (mức khớp model vs rule), không phải điểm rủi ro.
     String scoreStr;
     if (mlRollAcc >= 100.0f)
@@ -175,13 +175,13 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     {
         scoreStr = String(mlRollAcc, 2);
     }
-
+ 
     String lanIp = "";
     if (WiFi.status() == WL_CONNECTED)
     {
         lanIp = WiFi.localIP().toString();
     }
-
+ 
     String payload = "{";
     payload += "\"timestamp_real\":\"" + formatTimestamp(tvReal.tv_sec) + "\",";
     payload += "\"timestamp_up\":\"" + formatTimestamp(tvUp.tv_sec) + "\",";
@@ -201,15 +201,15 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     payload += "}";
     return payload;
 }
-
+ 
 void task_database(void *pvParameters)
 {
     SharedContext *ctx = static_cast<SharedContext *>(pvParameters);
-
+ 
     while (1)
     {
         const bool gotEvent = xSemaphoreTake(ctx->semDBUpdate, pdMS_TO_TICKS(5000)) == pdTRUE;
-
+ 
         if (gotEvent)
         {
             char triggerSource[8] = "sensor";
@@ -219,7 +219,7 @@ void task_database(void *pvParameters)
                 triggerSource[sizeof(triggerSource) - 1] = '\0';
                 xSemaphoreGive(ctx->mutexContext);
             }
-
+ 
             unsigned long minGap      = 200UL;
             unsigned long lastPostMs  = (strcmp(triggerSource, "pump") == 0)
                                         ? g_lastDBPostMs_pump
@@ -230,11 +230,11 @@ void task_database(void *pvParameters)
                 {
                     g_pumpEventPending = false;
                 }
-
+ 
                 const bool skipSensorForPump =
                     strcmp(triggerSource, "sensor") == 0 &&
                     (g_pumpEventPending || millis() - g_lastDBPostMs_pump < 200UL);
-
+ 
                 if (!skipSensorForPump)
                 {
                     enqueuePost(buildPayload(ctx, triggerSource));
@@ -245,7 +245,7 @@ void task_database(void *pvParameters)
                 }
             }
         }
-
+ 
         flushPostQueue();
     }
 }

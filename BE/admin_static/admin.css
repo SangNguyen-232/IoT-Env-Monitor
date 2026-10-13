@@ -6,7 +6,7 @@
   --border:      rgba(255,255,255,0.06);
   --text:        #eef1f8;
   --muted:       #828ba3;
-
+ 
   --accent:      #3b6df0;
   --green:       #2ecc71;
   --green-soft:  rgba(46,204,113,0.15);
@@ -17,27 +17,27 @@
   --blue:        #4aa3ff;
   --blue-soft:   rgba(74,163,255,0.15);
   --purple:      #b06af7;
-
+ 
   --radius:      14px;
   --radius-sm:   9px;
 }
-
+ 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-
+ 
 html, body {
   background: var(--bg);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   min-height: 100vh;
 }
-
+ 
 /* ─── Layout ─── */
 .admin-wrap {
   max-width: 1100px;
   margin: 0 auto;
   padding: 28px 24px 60px;
 }
-
+ 
 /* ─── Header ─── */
 .admin-header {
   display: flex;
@@ -47,7 +47,7 @@ html, body {
   gap: 16px;
   flex-wrap: wrap;
 }
-
+ 
 .admin-header h1 {
   font-size: 20px;
   font-weight: 700;
@@ -55,7 +55,7 @@ html, body {
   align-items: center;
   gap: 10px;
 }
-
+ 
 .admin-header h1 .brand-mark {
   width: 30px;
   height: 30px;
@@ -69,18 +69,18 @@ html, body {
   color: #fff;
   flex-shrink: 0;
 }
-
+ 
 .header-right {
   display: flex;
   align-items: center;
   gap: 12px;
 }
-
+ 
 .refresh-info {
   font-size: 12px;
   color: var(--muted);
 }
-
+ 
 .btn-refresh {
   background: var(--card);
   border: 1px solid var(--border);
@@ -97,7 +97,7 @@ html, body {
 }
 .btn-refresh:hover { background: rgba(255,255,255,0.06); }
 .btn-refresh svg { width: 14px; height: 14px; }
-
+ 
 /* ─── Summary bar ─── */
 .summary-bar {
   display: grid;
@@ -105,7 +105,7 @@ html, body {
   gap: 14px;
   margin-bottom: 24px;
 }
-
+ 
 .summary-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -115,7 +115,7 @@ html, body {
   align-items: center;
   gap: 12px;
 }
-
+ 
 .summary-icon {
   width: 36px;
   height: 36px;
@@ -130,10 +130,10 @@ html, body {
 .icon-online  { background: var(--green-soft);  color: var(--green); }
 .icon-offline { background: var(--red-soft);    color: var(--red); }
 .icon-time    { background: rgba(176,106,247,0.15); color: var(--purple); }
-
+ 
 .summary-label { font-size: 12px; color: var(--muted); margin-bottom: 2px; }
 .summary-value { font-size: 22px; font-weight: 700; }
-
+ 
 /* ─── Section title ─── */
 .section-title {
   font-size: 13px;
@@ -143,14 +143,14 @@ html, body {
   text-transform: uppercase;
   margin-bottom: 12px;
 }
-
+ 
 /* ─── Device grid ─── */
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
   gap: 14px;
 }
-
+ 
 /* ─── Device card ─── */
 .device-card {
   background: var(--card);
@@ -162,13 +162,13 @@ html, body {
   position: relative;
   overflow: hidden;
 }
-
+ 
 .device-card:hover {
   border-color: rgba(59,109,240,0.45);
   transform: translateY(-2px);
   box-shadow: 0 8px 24px rgba(0,0,0,0.3);
 }
-
+ 
 .device-card-header {
   display: flex;
   align-items: flex-start;
@@ -176,19 +176,19 @@ html, body {
   margin-bottom: 14px;
   gap: 8px;
 }
-
+ 
 .device-name {
   font-size: 14px;
   font-weight: 600;
   word-break: break-all;
 }
-
+ 
 .device-id-label {
   font-size: 11px;
   color: var(--muted);
   margin-top: 2px;
 }
-
+ 
 .status-pill {
   display: inline-flex;
   align-items: center;
@@ -202,7 +202,7 @@ html, body {
 }
 .status-pill.online  { background: var(--green-soft); color: var(--green); }
 .status-pill.offline { background: var(--red-soft);   color: var(--red); }
-
+ 
 .status-dot {
   width: 6px;
   height: 6px;
@@ -210,7 +210,7 @@ html, body {
 }
 .online  .status-dot { background: var(--green); box-shadow: 0 0 5px var(--green); }
 .offline .status-dot { background: var(--red); }
-
+ 
 /* ─── Sensor row inside card ─── */
 .sensor-row {
   display: grid;
@@ -218,9 +218,9 @@ html, body {
   gap: 10px;
   margin-bottom: 14px;
 }
-
+ 
 .sensor-item { display: flex; flex-direction: column; gap: 3px; }
-
+ 
 .sensor-label {
   font-size: 10px;
   color: var(--muted);
@@ -228,7 +228,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
-
+ 
 .sensor-value {
   font-size: 18px;
   font-weight: 700;
@@ -239,7 +239,7 @@ html, body {
 .val-normal   { color: var(--green); }
 .val-warning  { color: var(--orange); }
 .val-critical { color: var(--red); }
-
+ 
 /* ─── Card footer ─── */
 .card-footer {
   display: flex;
@@ -250,9 +250,9 @@ html, body {
   gap: 8px;
   flex-wrap: wrap;
 }
-
+ 
 .meta-chips { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-
+ 
 .chip {
   font-size: 11px;
   font-weight: 600;
@@ -266,13 +266,13 @@ html, body {
 .chip-normal   { background: var(--green-soft);  color: var(--green); }
 .chip-warning  { background: var(--orange-soft); color: var(--orange); }
 .chip-critical { background: var(--red-soft);    color: var(--red); }
-
+ 
 .last-seen {
   font-size: 11px;
   color: var(--muted);
   white-space: nowrap;
 }
-
+ 
 /* ─── View detail button hint ─── */
 .card-arrow {
   position: absolute;
@@ -291,7 +291,7 @@ html, body {
 }
 .card-arrow svg { width: 14px; height: 14px; }
 .device-card:hover .card-arrow { opacity: 1; }
-
+ 
 /* ─── Empty / loading state ─── */
 .state-box {
   grid-column: 1 / -1;
@@ -305,7 +305,7 @@ html, body {
   font-size: 14px;
 }
 .state-box svg { width: 40px; height: 40px; opacity: 0.4; }
-
+ 
 /* ─── Spinner ─── */
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner {
@@ -315,7 +315,7 @@ html, body {
   border-radius: 50%;
   animation: spin 0.7s linear infinite;
 }
-
+ 
 /* ─── Responsive ─── */
 @media (max-width: 800px) {
   .summary-bar { grid-template-columns: repeat(2, 1fr); }
@@ -325,7 +325,7 @@ html, body {
   .sensor-row  { grid-template-columns: repeat(3, 1fr); }
   .admin-wrap  { padding: 18px 16px 48px; }
 }
-
+ 
 /* ─── Action Bar and Bulk Delete ─── */
 .action-bar {
   display: flex;
@@ -339,13 +339,13 @@ html, body {
   gap: 12px;
   animation: barFadeIn 0.2s ease-in-out;
 }
-
+ 
 .action-bar-right {
   display: flex;
   align-items: center;
   gap: 16px;
 }
-
+ 
 .selected-count {
   font-size: 13px;
   color: var(--muted);
@@ -353,7 +353,7 @@ html, body {
 .selected-count strong {
   color: var(--blue);
 }
-
+ 
 .btn-action {
   background: var(--card);
   border: 1px solid var(--border);
@@ -365,12 +365,12 @@ html, body {
   cursor: pointer;
   transition: all 0.15s;
 }
-
+ 
 .btn-select-all:hover {
   background: rgba(255, 255, 255, 0.08);
   border-color: var(--muted);
 }
-
+ 
 .btn-delete-bulk {
   background: var(--red-soft);
   border-color: rgba(239, 68, 68, 0.4);
@@ -380,14 +380,14 @@ html, body {
   background: rgba(239, 68, 68, 0.3);
   box-shadow: 0 0 10px rgba(239, 68, 68, 0.2);
 }
-
+ 
 /* Device card state when clicked */
 .device-card.selected {
   border-color: var(--accent);
   background: linear-gradient(to bottom right, var(--card), rgba(59, 109, 240, 0.04));
   box-shadow: 0 4px 16px rgba(59, 109, 240, 0.12);
 }
-
+ 
 /* Circular virtual checkmark indicator in the top-right corner of the card. */
 .select-checkbox-indicator {
   position: absolute;
@@ -407,17 +407,17 @@ html, body {
   background: rgba(0, 0, 0, 0.2);
   z-index: 2;
 }
-
+ 
 .device-card:hover .select-checkbox-indicator {
   border-color: var(--muted);
 }
-
+ 
 .device-card.selected .select-checkbox-indicator {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
 }
-
+ 
 .device-card.selected .card-arrow {
   opacity: 0.6;
 }
@@ -426,12 +426,12 @@ html, body {
   background: var(--accent);
   color: #fff;
 }
-
+ 
 @keyframes barFadeIn {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
 }
-
+ 
 /* ─── Device Login Modal ─── */
 .login-modal-overlay {
   position: fixed;
@@ -443,12 +443,12 @@ html, body {
   z-index: 3000;
   animation: fadeInOverlay 0.15s ease;
 }
-
+ 
 @keyframes fadeInOverlay {
   from { opacity: 0; }
   to   { opacity: 1; }
 }
-
+ 
 .login-modal-box {
   background: var(--card);
   border: 1px solid var(--border);
@@ -458,25 +458,25 @@ html, body {
   max-width: 340px;
   animation: slideUp 0.18s ease;
 }
-
+ 
 @keyframes slideUp {
   from { transform: translateY(12px); opacity: 0; }
   to   { transform: translateY(0);    opacity: 1; }
 }
-
+ 
 .login-modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 6px;
 }
-
+ 
 .login-modal-header h2 {
   margin: 0;
   font-size: 15px;
   font-weight: 700;
 }
-
+ 
 .login-modal-close {
   background: none;
   border: none;
@@ -485,27 +485,27 @@ html, body {
   cursor: pointer;
   line-height: 1;
 }
-
+ 
 .login-device-id {
   font-size: 11px;
   color: var(--muted);
   margin-bottom: 16px;
   word-break: break-all;
 }
-
+ 
 .login-field {
   display: flex;
   flex-direction: column;
   gap: 6px;
   margin-bottom: 12px;
 }
-
+ 
 .login-field label {
   font-size: 12px;
   color: var(--muted);
   font-weight: 500;
 }
-
+ 
 .login-field input {
   padding: 9px 11px;
   border-radius: var(--radius-sm);
@@ -516,23 +516,23 @@ html, body {
   outline: none;
   transition: border-color 0.15s;
 }
-
+ 
 .login-field input:focus {
   border-color: var(--accent);
 }
-
+ 
 /* ── Password show/hide wrapper ── */
 .pwd-wrap {
   position: relative;
   display: flex;
   align-items: center;
 }
-
+ 
 .pwd-wrap input {
   width: 100%;
   padding-right: 36px;
 }
-
+ 
 .btn-eye {
   position: absolute;
   right: 9px;
@@ -546,10 +546,10 @@ html, body {
   line-height: 1;
   transition: color 0.15s;
 }
-
+ 
 .btn-eye:hover { color: var(--text); }
 .btn-eye svg { width: 15px; height: 15px; }
-
+ 
 .login-submit-btn {
   width: 100%;
   background: var(--accent);
@@ -562,38 +562,38 @@ html, body {
   cursor: pointer;
   transition: background 0.15s;
 }
-
+ 
 .login-submit-btn:hover { background: #4f7df5; }
 .login-submit-btn:active { transform: translateY(1px); }
 .login-submit-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
+ 
 .login-msg {
   margin-top: 10px;
   font-size: 12px;
   min-height: 18px;
   text-align: center;
 }
-
+ 
 .login-msg.error   { color: var(--red); }
 .login-msg.success { color: var(--green); }
-
+ 
 .login-divider {
   border: none;
   border-top: 1px solid var(--border);
   margin: 16px 0 14px;
 }
-
+ 
 .login-set-title {
   font-size: 12px;
   color: var(--muted);
   margin-bottom: 10px;
 }
-
+ 
 /* ─── Admin Device Modal ─── */
 .admin-modal-box {
   max-width: 380px;
 }
-
+ 
 .admin-enter-btn {
   background: var(--accent);
   display: flex;
@@ -605,7 +605,7 @@ html, body {
 }
 .admin-enter-btn:hover  { background: #4f7df5; }
 .admin-enter-btn:active { transform: translateY(1px); }
-
+ 
 .admin-pwd-section-title {
   font-size: 11px;
   font-weight: 700;
@@ -613,7 +613,7 @@ html, body {
   text-transform: uppercase;
   letter-spacing: 0.07em;
 }
-
+ 
 .admin-save-pwd-btn {
   background: rgba(59,109,240,0.12);
   border: 1px solid rgba(59,109,240,0.3);
@@ -625,7 +625,7 @@ html, body {
   border-color: rgba(59,109,240,0.55);
 }
 .admin-save-pwd-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
+ 
 .admin-delete-pwd-btn {
   width: 100%;
   background: var(--red-soft);
@@ -643,7 +643,7 @@ html, body {
   border-color: rgba(239,68,68,0.5);
 }
 .admin-delete-pwd-btn:disabled { opacity: 0.6; cursor: not-allowed; }
-
+ 
 /* ─── Assign Devices Modal ─── */
 .assign-modal-box { max-width: 420px; }
 .login-field select {
@@ -674,3 +674,35 @@ html, body {
 }
 .assign-device-item:last-child { border-bottom: none; }
 .assign-empty { padding: 12px; font-size: 12px; color: var(--muted); text-align: center; }
+ 
+/* ─── Responsive: phone / tablet / touch ─── */
+.header-right { flex-wrap: wrap; }
+#userBar      { flex-wrap: wrap; }
+.action-bar   { flex-wrap: wrap; }
+ 
+.device-grid {
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 300px), 1fr));
+}
+ 
+.login-modal-box {
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+ 
+/* Thiết bị không có hover: luôn hiện nút mũi tên */
+@media (hover: none) {
+  .card-arrow { opacity: 1; }
+}
+ 
+/* Vùng chạm đủ lớn trên màn cảm ứng */
+@media (pointer: coarse) {
+  .btn-refresh, .btn-action { min-height: 40px; }
+  .login-submit-btn, .admin-delete-pwd-btn { min-height: 42px; }
+}
+ 
+@media (max-width: 720px) {
+  .header-right { width: 100%; }
+  /* >=16px để iOS không tự zoom khi focus input */
+  .login-field input, .login-field select { font-size: 16px; }
+}

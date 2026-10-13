@@ -6,12 +6,12 @@ const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const path = require('path');
-
+ 
 const BCRYPT_ROUNDS = 10;
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map();
-
+ 
 function requireEnv(name) {
   const value = process.env[name];
   if (!value) {
@@ -20,34 +20,34 @@ function requireEnv(name) {
   }
   return value;
 }
-
+ 
 const sessionSecret = process.env.SESSION_SECRET || (
   process.env.NODE_ENV === 'production'
     ? requireEnv('SESSION_SECRET')
     : crypto.randomBytes(32).toString('hex')
 );
-
+ 
 if (!process.env.SESSION_SECRET) {
   console.warn('SESSION_SECRET is missing; using an ephemeral secret (sessions reset on restart).');
 }
-
+ 
 if (!process.env.DB_PASS) {
   console.error('DB_PASS is required.');
   process.exit(1);
 }
-
+ 
 const sensorApiKey = process.env.SENSOR_API_KEY;
 if (!sensorApiKey) {
   console.error('SENSOR_API_KEY is required.');
   process.exit(1);
 }
-
+ 
 const app = express();
 // CSP tắt vì admin.html / login.html dùng script/style inline và cần ws:// tới ESP32
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '32kb' }));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
-
+ 
 const pool = new Pool({
   host:     process.env.DB_HOST     || 'localhost',
   database: process.env.DB_NAME     || 'iot_db',
@@ -55,9 +55,9 @@ const pool = new Pool({
   password: process.env.DB_PASS,
   port:     parseInt(process.env.DB_PORT || '5432', 10),
 });
-
+ 
 pool.on('error', (err) => console.error('Unexpected PG pool error:', err));
-
+ 
 app.use(session({
   store: new pgSession({ pool, createTableIfMissing: true }),
   secret: sessionSecret,
@@ -70,15 +70,15 @@ app.use(session({
     maxAge: 8 * 60 * 60 * 1000
   }
 }));
-
+ 
 function isBcryptHash(value) {
   return typeof value === 'string' && /^\$2[aby]\$/.test(value);
 }
-
+ 
 async function hashPassword(plain) {
   return bcrypt.hash(plain, BCRYPT_ROUNDS);
 }
-
+ 
 async function verifyPassword(plain, stored) {
   if (!stored || !plain) return { ok: false, rehash: false };
   if (isBcryptHash(stored)) {
@@ -89,16 +89,16 @@ async function verifyPassword(plain, stored) {
   }
   return { ok: false, rehash: false };
 }
-
+ 
 function clientIp(req) {
   return req.ip || req.socket.remoteAddress || 'unknown';
 }
-
+ 
 function loginBlocked(req) {
   const rec = loginAttempts.get(clientIp(req));
   return Boolean(rec && rec.resetAt >= Date.now() && rec.count >= LOGIN_MAX_ATTEMPTS);
 }
-
+ 
 function recordLoginFailure(req) {
   const ip = clientIp(req);
   const now = Date.now();
@@ -109,24 +109,24 @@ function recordLoginFailure(req) {
   rec.count += 1;
   loginAttempts.set(ip, rec);
 }
-
+ 
 function clearLoginFailures(req) {
   loginAttempts.delete(clientIp(req));
 }
-
+ 
 function rateLimitLogin(req, res, next) {
   if (loginBlocked(req)) {
     return res.status(429).json({ error: 'Quá nhiều lần thử. Vui lòng thử lại sau.' });
   }
   next();
 }
-
+ 
 function safeEqual(a, b) {
   const ha = crypto.createHash('sha256').update(String(a || '')).digest();
   const hb = crypto.createHash('sha256').update(String(b || '')).digest();
   return crypto.timingSafeEqual(ha, hb);
 }
-
+ 
 function requireLogin(req, res, next) {
   if (req.session && req.session.user) return next();
   const path = (req.originalUrl || req.path || '').split('?')[0];
@@ -135,12 +135,12 @@ function requireLogin(req, res, next) {
   }
   res.redirect('/login');
 }
-
+ 
 function requireAdmin(req, res, next) {
   if (req.session && req.session.user && req.session.user.role === 'admin') return next();
   res.status(403).json({ error: 'Chỉ Admin mới có quyền thực hiện thao tác này.' });
 }
-
+ 
 function requireSensorKey(req, res, next) {
   const provided = req.get('X-Device-Key') || '';
   if (!safeEqual(provided, sensorApiKey)) {
@@ -148,28 +148,28 @@ function requireSensorKey(req, res, next) {
   }
   next();
 }
-
+ 
 function sanitizeDeviceId(id) {
   if (typeof id !== 'string') return null;
   const trimmed = id.trim().slice(0, 64);
   if (!/^[A-Za-z0-9._:-]+$/.test(trimmed)) return null;
   return trimmed;
 }
-
+ 
 function sanitizeLanIp(ip) {
   if (typeof ip !== 'string') return null;
   const trimmed = ip.trim();
   if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(trimmed)) return null;
   return trimmed;
 }
-
+ 
 function toNum(v) {
   if (typeof v === 'number') return Number.isFinite(v) ? v : null;
   if (typeof v !== 'string') return null;
   const n = parseFloat(v);
   return Number.isFinite(n) ? n : null;
 }
-
+ 
 async function userCanAccessDevice(req, deviceId) {
   const u = req.session.user;
   if (u.role === 'admin') return true;
@@ -179,7 +179,7 @@ async function userCanAccessDevice(req, deviceId) {
   );
   return r.rowCount > 0;
 }
-
+ 
 async function seedAdminIfEmpty() {
   const { rows } = await pool.query('SELECT COUNT(*)::int AS n FROM system_users');
   if (rows[0].n > 0) return;
@@ -195,9 +195,9 @@ async function seedAdminIfEmpty() {
   );
   console.log(`Seeded admin user "${username.trim()}".`);
 }
-
+ 
 const RETENTION_DAYS = parseInt(process.env.SENSOR_RETENTION_DAYS || '30', 10);
-
+ 
 async function purgeOldLogs() {
   if (!(RETENTION_DAYS > 0)) return;
   try {
@@ -210,7 +210,7 @@ async function purgeOldLogs() {
     console.error('purgeOldLogs failed:', err);
   }
 }
-
+ 
 async function ensureSchema() {
   await pool.query(`ALTER TABLE sensor_logs ADD COLUMN IF NOT EXISTS received_at timestamptz DEFAULT NOW()`);
   await pool.query(`ALTER TABLE sensor_logs ADD COLUMN IF NOT EXISTS lan_ip text`);
@@ -238,54 +238,54 @@ async function ensureSchema() {
     )
   `);
 }
-
+ 
 ensureSchema()
   .then(() => seedAdminIfEmpty())
   .then(() => { purgeOldLogs(); setInterval(purgeOldLogs, 6 * 60 * 60 * 1000); })
   .catch((err) => {
     console.error('Failed to initialize schema/admin:', err);
   });
-
+ 
 app.use('/login-static', express.static(path.join(__dirname, 'login_static')));
-
+ 
 app.get('/login', (req, res) => {
   if (req.session && req.session.user) return res.redirect('/admin/admin.html');
   res.sendFile(path.join(__dirname, 'login_static', 'login.html'));
 });
-
+ 
 app.post('/login', rateLimitLogin, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ error: 'Vui lòng nhập đầy đủ thông tin.' });
     }
-
+ 
     const result = await pool.query(
       'SELECT id, username, role, password FROM system_users WHERE username = $1',
       [username.trim()]
     );
-
+ 
     if (result.rows.length === 0) {
       recordLoginFailure(req);
       return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng.' });
     }
-
+ 
     const user = result.rows[0];
     const check = await verifyPassword(password, user.password);
     if (!check.ok) {
       recordLoginFailure(req);
       return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng.' });
     }
-
+ 
     clearLoginFailures(req);
-
+ 
     if (check.rehash) {
       await pool.query('UPDATE system_users SET password = $1 WHERE id = $2', [
         await hashPassword(password),
         user.id
       ]);
     }
-
+ 
     req.session.user = { id: user.id, username: user.username, role: user.role };
     res.json({ ok: true, role: user.role, username: user.username });
   } catch (err) {
@@ -293,17 +293,17 @@ app.post('/login', rateLimitLogin, async (req, res) => {
     res.status(500).json({ error: 'Tài khoản hoặc mật khẩu không đúng.' });
   }
 });
-
+ 
 app.post('/register', (req, res) => {
   res.status(403).json({ error: 'Đăng ký công khai đã tắt. Liên hệ quản trị viên để được cấp tài khoản.' });
 });
-
+ 
 app.post('/logout', (req, res) => {
   req.session.destroy(() => {
     res.json({ ok: true });
   });
 });
-
+ 
 app.get('/api/me', (req, res) => {
   if (req.session && req.session.user) {
     res.json({ loggedIn: true, username: req.session.user.username, role: req.session.user.role });
@@ -311,14 +311,14 @@ app.get('/api/me', (req, res) => {
     res.json({ loggedIn: false });
   }
 });
-
+ 
 app.get('/', (req, res) => {
   if (req.session && req.session.user) return res.redirect('/admin/admin.html');
   res.redirect('/login');
 });
-
+ 
 app.use('/admin', requireLogin, express.static(path.join(__dirname, 'admin_static'), { index: 'admin.html' }));
-
+ 
 app.post('/sensor', requireSensorKey, async (req, res) => {
   try {
     const {
@@ -326,15 +326,15 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
       soil_moisture, PUMP_state, MODE_state, Message, Score,
       device_id, lan_ip, latency, trigger_source
     } = req.body;
-
+ 
     const safeDeviceId = sanitizeDeviceId(device_id);
     if (!safeDeviceId) {
       return res.status(400).json({ error: 'invalid device_id' });
     }
-
+ 
     const safeMessage = typeof Message === 'string' ? Message.slice(0, 120) : Message;
     const safeLanIp = sanitizeLanIp(lan_ip);
-
+ 
     await pool.query(
       `INSERT INTO sensor_logs
         (timestamp_real, timestamp_up, received_at, temperature, humidity,
@@ -356,7 +356,7 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
     res.sendStatus(500);
   }
 });
-
+ 
 app.get('/admin/api/devices', requireLogin, async (req, res) => {
   try {
     const result = await pool.query(`
@@ -376,7 +376,7 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.get('/admin/api/devices/:device_id/history', requireLogin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -400,7 +400,7 @@ app.get('/admin/api/devices/:device_id/history', requireLogin, async (req, res) 
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.delete('/admin/api/devices/:device_id', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -411,7 +411,7 @@ app.delete('/admin/api/devices/:device_id', requireLogin, requireAdmin, async (r
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.post('/admin/api/devices/:device_id/verify', requireLogin, rateLimitLogin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -443,12 +443,12 @@ app.post('/admin/api/devices/:device_id/verify', requireLogin, rateLimitLogin, a
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 // ─── Access requests (in-memory): User xin vào thiết bị chưa có mật khẩu ───
 const ACCESS_REQ_PENDING_TTL_MS = 5 * 60 * 1000;
 const ACCESS_REQ_DECIDED_TTL_MS = 2 * 60 * 1000;
 const accessRequests = new Map();
-
+ 
 function pruneAccessRequests() {
   const now = Date.now();
   for (const [id, r] of accessRequests) {
@@ -456,7 +456,7 @@ function pruneAccessRequests() {
     if (now - r.updatedAt > ttl) accessRequests.delete(id);
   }
 }
-
+ 
 app.post('/admin/api/devices/:device_id/access-request', requireLogin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -488,14 +488,14 @@ app.post('/admin/api/devices/:device_id/access-request', requireLogin, async (re
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.get('/admin/api/access-requests/:id/status', requireLogin, (req, res) => {
   pruneAccessRequests();
   const r = accessRequests.get(req.params.id);
   if (!r || r.userId !== req.session.user.id) return res.json({ status: 'expired' });
   res.json({ status: r.status });
 });
-
+ 
 app.get('/admin/api/access-requests', requireLogin, requireAdmin, (req, res) => {
   pruneAccessRequests();
   res.json(
@@ -504,7 +504,7 @@ app.get('/admin/api/access-requests', requireLogin, requireAdmin, (req, res) => 
       .map((r) => ({ id: r.id, username: r.username, deviceId: r.deviceId }))
   );
 });
-
+ 
 app.post('/admin/api/access-requests/:id/decision', requireLogin, requireAdmin, (req, res) => {
   pruneAccessRequests();
   const r = accessRequests.get(req.params.id);
@@ -515,7 +515,7 @@ app.post('/admin/api/access-requests/:id/decision', requireLogin, requireAdmin, 
   r.updatedAt = Date.now();
   res.sendStatus(200);
 });
-
+ 
 app.get('/admin/api/devices/:device_id/has-password', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -529,7 +529,7 @@ app.get('/admin/api/devices/:device_id/has-password', requireLogin, requireAdmin
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.post('/admin/api/devices/:device_id/password', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -548,7 +548,7 @@ app.post('/admin/api/devices/:device_id/password', requireLogin, requireAdmin, a
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.delete('/admin/api/devices/:device_id/password', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { device_id } = req.params;
@@ -559,7 +559,7 @@ app.delete('/admin/api/devices/:device_id/password', requireLogin, requireAdmin,
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.get('/admin/api/users', requireLogin, requireAdmin, async (req, res) => {
   try {
     const result = await pool.query(
@@ -571,7 +571,7 @@ app.get('/admin/api/users', requireLogin, requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.post('/admin/api/users', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { username, password, role } = req.body;
@@ -592,7 +592,7 @@ app.post('/admin/api/users', requireLogin, requireAdmin, async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.delete('/admin/api/users/:id', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { id } = req.params;
@@ -606,7 +606,7 @@ app.delete('/admin/api/users/:id', requireLogin, requireAdmin, async (req, res) 
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.get('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, res) => {
   try {
     const r = await pool.query(
@@ -619,7 +619,7 @@ app.get('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
     res.status(500).json({ error: err.message });
   }
 });
-
+ 
 app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, res) => {
   const userId = parseInt(req.params.id, 10);
   const list = (req.body || {}).devices;
@@ -652,5 +652,5 @@ app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
     client.release();
   }
 });
-
+ 
 app.listen(3000, () => console.log('API running on port 3000'));

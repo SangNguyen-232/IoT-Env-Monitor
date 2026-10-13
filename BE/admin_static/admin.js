@@ -1,19 +1,19 @@
 (function () {
   "use strict";
-
+ 
   // ─── Auth state (Loaded from /api/me during application startup) ───────
   var currentUser = null;   // { username, role }
-
+ 
   var STALE_DIFF_MS = 10 * 1000;
   var COUNTDOWN_SECONDS = 5;
-
+ 
   var countdownStart = {};
   var currentDevices = [];
   var selectedDeviceIds = [];
   var latestTimestampUp = null;
-
+ 
   var deviceWsMap = {};
-
+ 
   // ─── Load user information and redirect if the user is not logged in ───────────────
   function loadCurrentUser(cb) {
     fetch('/api/me')
@@ -31,19 +31,19 @@
         window.location.href = '/login';
       });
   }
-
+ 
   // ─── Render the user bar and logout button in the header ────────────
   function renderUserBar() {
     var headerRight = document.querySelector('.header-right');
     if (!headerRight) return;
-
+ 
     var existing = document.getElementById('userBar');
     if (existing) existing.remove();
-
+ 
     var bar = document.createElement('div');
     bar.id = 'userBar';
     bar.style.cssText = 'display:flex;align-items:center;gap:10px;';
-
+ 
     var roleColor = currentUser.role === 'admin' ? '#b06af7' : '#4aa3ff';
     var rolePill = document.createElement('span');
     rolePill.style.cssText =
@@ -51,7 +51,7 @@
       'background:' + (currentUser.role === 'admin' ? 'rgba(176,106,247,0.15)' : 'rgba(74,163,255,0.15)') + ';' +
       'color:' + roleColor + ';';
     rolePill.textContent = (currentUser.role === 'admin' ? '⚙ Admin' : '👤 User') + ' · ' + currentUser.username;
-
+ 
     var btnLogout = document.createElement('button');
     btnLogout.className = 'btn-refresh';
     btnLogout.style.cssText = 'color:#ef4444;border-color:rgba(239,68,68,0.3);';
@@ -62,7 +62,7 @@
         '<line x1="21" y1="12" x2="9" y2="12"/>' +
       '</svg> Đăng xuất';
     btnLogout.addEventListener('click', doLogout);
-
+ 
     bar.appendChild(rolePill);
     if (isAdmin()) {
       var btnCreateUser = document.createElement('button');
@@ -70,7 +70,7 @@
       btnCreateUser.textContent = '➕ Tạo User';
       btnCreateUser.addEventListener('click', openCreateUserModal);
       bar.appendChild(btnCreateUser);
-
+ 
       var btnAssign = document.createElement('button');
       btnAssign.className = 'btn-refresh';
       btnAssign.textContent = '👥 Phân quyền';
@@ -80,26 +80,26 @@
     bar.appendChild(btnLogout);
     headerRight.insertBefore(bar, headerRight.firstChild);
   }
-
+ 
   function doLogout() {
     fetch('/logout', { method: 'POST' })
       .then(function () { window.location.href = '/login'; })
       .catch(function () { window.location.href = '/login'; });
   }
-
+ 
   // ─── Check Admin Privileges ──────────────────────────────────
   function isAdmin() {
     return currentUser && currentUser.role === 'admin';
   }
-
+ 
   function canUseLanSockets() {
     return window.location.protocol === "http:";
   }
-
+ 
   function lanHost(device) {
     return device && device.lan_ip ? device.lan_ip : "";
   }
-
+ 
   function connectDeviceWS(device) {
     if (!canUseLanSockets()) return;
     var host = lanHost(device);
@@ -111,13 +111,13 @@
     }
     var ws = new WebSocket("ws://" + host + "/ws");
     deviceWsMap[deviceId] = ws;
-
+ 
     ws.onmessage = function (evt) {
       var data;
       try { data = JSON.parse(evt.data); } catch (e) { return; }
       var card = document.querySelector(".device-card[data-device-id='" + String(deviceId).replace(/['\\]/g, "") + "']");
       if (!card) return;
-
+ 
       if (typeof data.temperature === "number") {
         var elT = card.querySelector(".js-val-temp");
         if (elT) {
@@ -140,9 +140,9 @@
           elS.className = "sensor-value js-val-soil " + soilColorClass(data.soil_moisture);
         }
       }
-
+ 
       };
-
+ 
     ws.onclose = function () {
       delete deviceWsMap[deviceId];
       setTimeout(function () {
@@ -152,7 +152,7 @@
     };
     ws.onerror = function () { ws.close(); };
   }
-
+ 
   function syncDeviceWsSessions() {
     currentDevices.forEach(function (d) { connectDeviceWS(d); });
     Object.keys(deviceWsMap).forEach(function (id) {
@@ -162,24 +162,24 @@
       }
     });
   }
-
+ 
   function detailUrl(device) {
     var host = lanHost(device);
     return host ? ("http://" + host + "/") : "";
   }
-
+ 
   function fmtValue(v) {
     return (v !== null && v !== undefined && v !== "") ? v : "—";
   }
-
+ 
   function fmtTemp(v) { var n = parseFloat(v); return isNaN(n) ? "—" : n.toFixed(2) + "\u00B0C"; }
   function fmtHumi(v) { var n = parseFloat(v); return isNaN(n) ? "—" : (n >= 99.95 ? "100" : n.toFixed(2)) + "%"; }
   function fmtSoil(v) { var n = parseFloat(v); if (isNaN(n)) return "—"; var s = Math.round(n); return (s < 10 ? "0" + s : "" + s) + "%"; }
-
+ 
   function displayName(deviceId) {
     return deviceId || "Unknown";
   }
-
+ 
   function escapeHtml(str) {
     return String(str == null ? "" : str)
       .replace(/&/g, "&amp;")
@@ -188,7 +188,7 @@
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   }
-
+ 
   function fmtTimestamp(tsStr) {
     if (!tsStr) return "—";
     var d = new Date(tsStr);
@@ -196,7 +196,7 @@
     return pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + d.getFullYear() +
       " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
   }
-
+ 
   function formatOfflineTime(seconds) {
     seconds = Math.max(0, Math.floor(seconds));
     var h = Math.floor(seconds / 3600);
@@ -208,7 +208,7 @@
     if (s > 0) parts.push(s + "s");
     return parts.length === 0 ? "0s" : parts.join("");
   }
-
+ 
   function getTimestampMs(device) {
     if (!device) return null;
     var raw = device.received_at || device.timestamp_up;
@@ -216,7 +216,7 @@
     var ts = new Date(raw).getTime();
     return isNaN(ts) ? null : ts;
   }
-
+ 
   function updateStaleState(device) {
     var id = device.device_id;
     if (!device.received_at && !device.timestamp_up) {
@@ -235,7 +235,7 @@
       delete countdownStart[id];
     }
   }
-
+ 
   function getCountdownState(deviceId) {
     var start = countdownStart[deviceId];
     if (!start) return null;
@@ -249,22 +249,22 @@
       return { isOnline: false, text: formatOfflineTime(roundedOfflineSeconds), label: "Đã Offline: " };
     }
   }
-
+ 
   function isDeviceOnline(device) {
     var timestampMs = getTimestampMs(device);
     if (timestampMs === null) return false;
-
+ 
     var state = getCountdownState(device.device_id);
     if (state !== null) return state.isOnline;
-
+ 
     var age = Date.now() - timestampMs;
     return age >= 0 && age < STALE_DIFF_MS;
   }
-
+ 
   // ─── Action Bar: Hide the Delete button for User ──────────────────────
   function renderActionBar() {
     var actionBar = document.getElementById("customActionBar");
-
+ 
     if (!actionBar) {
       actionBar = document.createElement("div");
       actionBar.id = "customActionBar";
@@ -272,21 +272,21 @@
       var grid = document.getElementById("deviceGrid");
       if (grid && grid.parentNode) grid.parentNode.insertBefore(actionBar, grid);
     }
-
+ 
     if (currentDevices.length === 0) {
       actionBar.style.display = "none";
       return;
     }
-
+ 
     // Users are not allowed to select or delete multiple devices
     if (!isAdmin()) {
       actionBar.style.display = "none";
       return;
     }
-
+ 
     actionBar.style.display = "flex";
     var isAllSelected = currentDevices.length > 0 && selectedDeviceIds.length === currentDevices.length;
-
+ 
     actionBar.innerHTML =
       '<div class="action-bar-left">' +
         '<button class="btn-action btn-select-all" id="btnSelectAll">' +
@@ -297,7 +297,7 @@
         '<span class="selected-count">Đã chọn <strong>' + selectedDeviceIds.length + '</strong> thiết bị</span>' +
         '<button class="btn-action btn-delete-bulk" id="btnDeleteBulk">🗑️ Xóa đã chọn</button>' +
       '</div>';
-
+ 
     document.getElementById("btnSelectAll").addEventListener("click", function () {
       if (isAllSelected) {
         selectedDeviceIds = [];
@@ -307,11 +307,11 @@
       renderGrid(currentDevices);
       renderActionBar();
     });
-
+ 
     if (selectedDeviceIds.length > 0) {
       document.getElementById("btnDeleteBulk").addEventListener("click", function () {
         if (!confirm("Xóa toàn bộ dữ liệu của " + selectedDeviceIds.length + " thiết bị đã chọn?")) return;
-
+ 
         var deletePromises = selectedDeviceIds.map(function (id) {
           return fetch("/admin/api/devices/" + encodeURIComponent(id), { method: "DELETE" })
             .then(function (r) {
@@ -319,7 +319,7 @@
               return id;
             });
         });
-
+ 
         Promise.all(deletePromises)
           .then(function (deletedIds) {
             currentDevices = currentDevices.filter(function (d) {
@@ -338,7 +338,7 @@
       });
     }
   }
-
+ 
   function tempColorClass(t) {
     var v = parseFloat(t);
     if (isNaN(v)) return "val-temp";
@@ -360,34 +360,34 @@
     if (v < 30.0 || v > 40.0) return "val-warning";
     return "val-normal";
   }
-
+ 
   // ─── Render device cards: only administrators can select devices for deletion ──────
   function renderCard(device) {
     var state = getCountdownState(device.device_id);
     var cardOnline = isDeviceOnline(device);
     var cardStatusClass = cardOnline ? "online" : "offline";
     var cardStatusLabel = cardOnline ? "Online" : "Offline";
-
+ 
     var isStable = (state === null);
     var displayStyle = isStable ? "none" : "";
     var countdownDisplay = isStable ? "" : state.text;
     var countdownPrefix  = isStable ? "" : state.label;
-
+ 
     var url = detailUrl(device);
     var isSelected = selectedDeviceIds.includes(device.device_id);
-
+ 
     var card = document.createElement("div");
     card.className = "device-card" + (isSelected && isAdmin() ? " selected" : "");
     card.setAttribute("role", "button");
     card.setAttribute("tabindex", "0");
     card.setAttribute("data-device-id", device.device_id);
     card.title = isAdmin() ? "Chọn/Bỏ chọn " + device.device_id : device.device_id;
-
+ 
     // Display the checkbox indicator only for administrators
     var checkboxHtml = isAdmin()
       ? '<div class="select-checkbox-indicator">' + (isSelected ? '✓' : '') + '</div>'
       : '';
-
+ 
     card.innerHTML =
       checkboxHtml +
       '<div class="device-card-header">' +
@@ -425,7 +425,7 @@
           '<path d="M5 12h14M13 6l6 6-6 6"/>' +
         '</svg>' +
       '</div>';
-
+ 
     // Handle card selection: only administrators can select cards
     card.addEventListener("click", function () {
       if (!isAdmin()) return;
@@ -437,7 +437,7 @@
       renderGrid(currentDevices);
       renderActionBar();
     });
-
+ 
     var arrowBtn = card.querySelector(".card-arrow");
     if (arrowBtn) {
       arrowBtn.addEventListener("click", function (e) {
@@ -449,21 +449,21 @@
         openDeviceLoginModal(device.device_id, url);
       });
     }
-
+ 
     card.addEventListener("keydown", function (e) {
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         card.click();
       }
     });
-
+ 
     return card;
   }
-
+ 
   function renderGrid(devices) {
     var grid = document.getElementById("deviceGrid");
     grid.innerHTML = "";
-
+ 
     if (!devices || devices.length === 0) {
       grid.innerHTML =
         '<div class="state-box">' +
@@ -476,12 +476,12 @@
         '</div>';
       return;
     }
-
+ 
     devices.forEach(function (device) {
       grid.appendChild(renderCard(device));
     });
   }
-
+ 
   function updateSummary(devices) {
     var total = devices.length;
     var online = devices.filter(isDeviceOnline).length;
@@ -490,19 +490,19 @@
     document.getElementById("sumOnline").textContent = online;
     document.getElementById("sumOffline").textContent = offline;
   }
-
+ 
   function tickCountdowns() {
     var cards = document.querySelectorAll(".device-card[data-device-id]");
     cards.forEach(function (card) {
       var id = card.getAttribute("data-device-id");
       var state = getCountdownState(id);
-
+ 
       var lastSeenEl  = card.querySelector(".js-last-seen");
       var countdownEl = card.querySelector(".js-countdown");
       var labelPrefixEl = card.querySelector(".js-countdown-label");
       var pillEl = card.querySelector(".js-status-pill");
       var labelEl = card.querySelector(".js-status-label");
-
+ 
       if (lastSeenEl && countdownEl && labelPrefixEl) {
         if (state === null) {
           lastSeenEl.style.display = "none";
@@ -512,7 +512,7 @@
           labelPrefixEl.textContent = state.label;
         }
       }
-
+ 
       if (pillEl && labelEl) {
         var device = currentDevices.find(function (item) {
           return item.device_id === id;
@@ -522,10 +522,10 @@
         labelEl.textContent = cardOnline ? "Online" : "Offline";
       }
     });
-
+ 
     updateSummary(currentDevices);
   }
-
+ 
   function refreshLastRefreshText() {
     var el = document.getElementById("lastRefresh");
     var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
@@ -539,7 +539,7 @@
       el.textContent = "Chưa có dữ liệu";
     }
   }
-
+ 
   function fetchDevices() {
     fetch("/admin/api/devices")
       .then(function (r) {
@@ -553,19 +553,19 @@
       .then(function (data) {
         if (!data) return;
         currentDevices = data || [];
-
+ 
         var currentIds = currentDevices.map(function (d) { return d.device_id; });
         selectedDeviceIds = selectedDeviceIds.filter(function (id) { return currentIds.includes(id); });
-
+ 
         currentDevices.forEach(function (device) { updateStaleState(device); });
-
+ 
         var newest = null;
         currentDevices.forEach(function (device) {
           var t = getTimestampMs(device);
           if (t !== null && (!newest || t > newest)) newest = t;
         });
         latestTimestampUp = newest;
-
+ 
         renderGrid(currentDevices);
         updateSummary(currentDevices);
         renderActionBar();
@@ -585,21 +585,21 @@
         document.getElementById("lastRefresh").textContent = "Lỗi kết nối";
       });
   }
-
+ 
   // ─── Boot ──────────────────────────────────────────────────
   document.getElementById("btnRefresh").addEventListener("click", fetchDevices);
-
+ 
   function tickClock() {
     var now = new Date();
     var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
     document.getElementById("sumTime").textContent =
       pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
   }
-
+ 
   tickClock();
   setInterval(tickClock, 1000);
   setInterval(tickCountdowns, 1000);
-
+ 
   // Load user information first, then fetch the devices
   loadCurrentUser(function () {
     fetchDevices();
@@ -607,11 +607,11 @@
     pollAccessRequests();
     setInterval(pollAccessRequests, 3000);
   });
-
+ 
   // ─── Device Login Modal (User) ─────────────
   var loginTargetUrl = "";
   var loginTargetId  = "";
-
+ 
   var loginModal         = document.getElementById("deviceLoginModal");
   var loginModalClose    = document.getElementById("loginModalClose");
   var loginDeviceIdEl    = document.getElementById("loginDeviceId");
@@ -623,7 +623,7 @@
   var newPasswordInput   = document.getElementById("newPasswordInput");
   var setPasswordBtn     = document.getElementById("setPasswordBtn");
   var setPasswordMsg     = document.getElementById("setPasswordMsg");
-
+ 
   // ─── Admin Device Management Modal ──────────
   var adminModal             = document.getElementById("adminDeviceModal");
   var adminModalClose        = document.getElementById("adminModalClose");
@@ -635,10 +635,10 @@
   var adminPwdSectionTitle   = document.getElementById("adminPwdSectionTitle");
   var adminDeletePwdSection  = document.getElementById("adminDeletePwdSection");
   var adminDeletePasswordBtn = document.getElementById("adminDeletePasswordBtn");
-
+ 
   var adminTargetUrl = "";
   var adminTargetId  = "";
-
+ 
   // Open appropriate modal based on role
   function openDeviceLoginModal(deviceId, url) {
     if (isAdmin()) {
@@ -647,21 +647,21 @@
       openUserDeviceModal(deviceId, url);
     }
   }
-
+ 
   // ─── Admin modal ─────────────────────────────
   function openAdminDeviceModal(deviceId, url) {
     adminTargetId  = deviceId;
     adminTargetUrl = url;
-
+ 
     adminModalDeviceIdEl.textContent  = "Thiết bị: " + deviceId;
     adminNewPasswordInput.value       = "";
     adminPwdMsg.textContent           = "";
     adminPwdMsg.className             = "login-msg";
     adminDeletePwdSection.style.display = "none";
     adminPwdSectionTitle.textContent  = "Đặt mật khẩu thiết bị";
-
+ 
     adminModal.style.display = "flex";
-
+ 
     // Check if this device already has a password
     fetch("/admin/api/devices/" + encodeURIComponent(deviceId) + "/has-password")
       .then(function (r) { return r.json(); })
@@ -675,31 +675,31 @@
         }
       })
       .catch(function () {});
-
+ 
     setTimeout(function () { adminNewPasswordInput.focus(); }, 80);
   }
-
+ 
   function closeAdminDeviceModal() {
     adminModal.style.display = "none";
   }
-
+ 
   adminModalClose.addEventListener("click", closeAdminDeviceModal);
-
+ 
   adminModal.addEventListener("click", function (e) {
     if (e.target === adminModal) closeAdminDeviceModal();
   });
-
+ 
   // Admin: Enter Dashboard directly (no password required)
   adminEnterDashboardBtn.addEventListener("click", function () {
     closeAdminDeviceModal();
     window.location.href = adminTargetUrl;
   });
-
+ 
   // Admin: Save password
   adminNewPasswordInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") adminSavePasswordBtn.click();
   });
-
+ 
   adminSavePasswordBtn.addEventListener("click", function () {
     var pass = adminNewPasswordInput.value.trim();
     if (!pass) {
@@ -707,11 +707,11 @@
       adminPwdMsg.className   = "login-msg error";
       return;
     }
-
+ 
     adminSavePasswordBtn.disabled = true;
     adminPwdMsg.textContent       = "Đang lưu...";
     adminPwdMsg.className         = "login-msg";
-
+ 
     fetch("/admin/api/devices/" + encodeURIComponent(adminTargetId) + "/password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -736,15 +736,15 @@
         adminPwdMsg.className         = "login-msg error";
       });
   });
-
+ 
   // Admin: Delete password
   adminDeletePasswordBtn.addEventListener("click", function () {
     if (!confirm("Xóa mật khẩu của thiết bị \"" + adminTargetId + "\"?\nSau khi xóa, User có thể vào dashboard mà không cần mật khẩu.")) return;
-
+ 
     adminDeletePasswordBtn.disabled = true;
     adminPwdMsg.textContent         = "Đang xóa...";
     adminPwdMsg.className           = "login-msg";
-
+ 
     fetch("/admin/api/devices/" + encodeURIComponent(adminTargetId) + "/password", {
       method: "DELETE"
     })
@@ -767,12 +767,12 @@
         adminPwdMsg.className           = "login-msg error";
       });
   });
-
+ 
   // ─── User modal (unchanged logic) ────────────
   function openUserDeviceModal(deviceId, url) {
     loginTargetId  = deviceId;
     loginTargetUrl = url;
-
+ 
     loginDeviceIdEl.textContent    = "Thiết bị: " + deviceId;
     loginPasswordInput.value       = "";
     newPasswordInput.value         = "";
@@ -780,38 +780,38 @@
     loginMsg.className             = "login-msg";
     setPasswordMsg.textContent     = "";
     setPasswordMsg.className       = "login-msg";
-
+ 
     stopAccessPoll();
     loginSubmitBtn.disabled          = false;
     loginSection.style.display       = "";
     setPasswordSection.style.display = "none";
-
+ 
     loginModal.style.display = "flex";
     setTimeout(function () { loginPasswordInput.focus(); }, 80);
   }
-
+ 
   function closeDeviceLoginModal() {
     stopAccessPoll();
     loginModal.style.display = "none";
   }
-
+ 
   loginModalClose.addEventListener("click", closeDeviceLoginModal);
-
+ 
   loginModal.addEventListener("click", function (e) {
     if (e.target === loginModal) closeDeviceLoginModal();
   });
-
+ 
   loginPasswordInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") loginSubmitBtn.click();
   });
-
+ 
   loginSubmitBtn.addEventListener("click", function () {
     var pass = loginPasswordInput.value.trim();
-
+ 
     loginSubmitBtn.disabled = true;
     loginMsg.textContent    = "Đang xác thực...";
     loginMsg.className      = "login-msg";
-
+ 
     fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/verify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -820,13 +820,13 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         loginSubmitBtn.disabled = false;
-
+ 
         // Device has no password → gửi yêu cầu, chờ Admin duyệt
         if (data.reason === "no_password") {
           startAccessRequest();
           return;
         }
-
+ 
         if (data.ok) {
           loginMsg.textContent = "Thành công! Đang chuyển hướng...";
           loginMsg.className   = "login-msg success";
@@ -847,11 +847,11 @@
         loginMsg.className      = "login-msg error";
       });
   });
-
+ 
   newPasswordInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") setPasswordBtn.click();
   });
-
+ 
   setPasswordBtn.addEventListener("click", function () {
     if (!isAdmin()) return;
     var pass = newPasswordInput.value.trim();
@@ -860,11 +860,11 @@
       setPasswordMsg.className   = "login-msg error";
       return;
     }
-
+ 
     setPasswordBtn.disabled    = true;
     setPasswordMsg.textContent = "Đang lưu...";
     setPasswordMsg.className   = "login-msg";
-
+ 
     fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -887,19 +887,19 @@
         setPasswordMsg.className   = "login-msg error";
       });
   });
-
+ 
   // ─── Access request: phía User (chờ duyệt) ──────────
   var accessPollTimer = null;
-
+ 
   function stopAccessPoll() {
     if (accessPollTimer) { clearInterval(accessPollTimer); accessPollTimer = null; }
   }
-
+ 
   function startAccessRequest() {
     loginSubmitBtn.disabled = true;
     loginMsg.textContent    = "Thiết bị chưa có mật khẩu. Đang gửi yêu cầu đến Admin...";
     loginMsg.className      = "login-msg";
-
+ 
     fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/access-request", { method: "POST" })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
       .then(function (res) {
@@ -944,7 +944,7 @@
         loginMsg.className      = "login-msg error";
       });
   }
-
+ 
   // ─── Access request: phía Admin (duyệt) ──────────
   function renderAccessRequests(list) {
     var bar = document.getElementById("accessRequestBar");
@@ -974,7 +974,7 @@
       bar.appendChild(row);
     });
   }
-
+ 
   function pollAccessRequests() {
     if (!isAdmin()) return;
     fetch("/admin/api/access-requests")
@@ -982,7 +982,7 @@
       .then(renderAccessRequests)
       .catch(function () {});
   }
-
+ 
   function decideAccessRequest(id, approve) {
     fetch("/admin/api/access-requests/" + encodeURIComponent(id) + "/decision", {
       method: "POST",
@@ -992,7 +992,7 @@
       .then(pollAccessRequests)
       .catch(pollAccessRequests);
   }
-
+ 
   // ─── Assign devices to users (Admin) ──────────
   var assignModal      = document.getElementById("assignModal");
   var assignModalClose = document.getElementById("assignModalClose");
@@ -1000,19 +1000,19 @@
   var assignDeviceList = document.getElementById("assignDeviceList");
   var assignSaveBtn    = document.getElementById("assignSaveBtn");
   var assignMsg        = document.getElementById("assignMsg");
-
+ 
   function setAssignMsg(text, cls) {
     assignMsg.textContent = text;
     assignMsg.className = "login-msg" + (cls ? " " + cls : "");
   }
-
+ 
   function openAssignModal() {
     if (!isAdmin()) return;
     setAssignMsg("", "");
     assignDeviceList.innerHTML = "";
     assignUserSelect.innerHTML = "";
     assignModal.style.display = "flex";
-
+ 
     fetch("/admin/api/users")
       .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
       .then(function (users) {
@@ -1033,7 +1033,7 @@
       })
       .catch(function () { setAssignMsg("Không tải được danh sách tài khoản.", "error"); });
   }
-
+ 
   function loadAssignedDevices() {
     var uid = assignUserSelect.value;
     if (!uid) return;
@@ -1065,13 +1065,13 @@
       })
       .catch(function () { setAssignMsg("Không tải được danh sách thiết bị.", "error"); });
   }
-
+ 
   assignUserSelect.addEventListener("change", loadAssignedDevices);
   assignModalClose.addEventListener("click", function () { assignModal.style.display = "none"; });
   assignModal.addEventListener("click", function (e) {
     if (e.target === assignModal) assignModal.style.display = "none";
   });
-
+ 
   assignSaveBtn.addEventListener("click", function () {
     var uid = assignUserSelect.value;
     if (!uid) return;
@@ -1096,7 +1096,7 @@
         setAssignMsg("Lỗi kết nối, thử lại.", "error");
       });
   });
-
+ 
   // ─── Create User (Admin) ──────────
   var createUserModal       = document.getElementById("createUserModal");
   var createUserModalClose  = document.getElementById("createUserModalClose");
@@ -1104,12 +1104,12 @@
   var createUserPassInput   = document.getElementById("createUserPassword");
   var createUserSubmitBtn   = document.getElementById("createUserSubmitBtn");
   var createUserMsg         = document.getElementById("createUserMsg");
-
+ 
   function setCreateUserMsg(text, cls) {
     createUserMsg.textContent = text;
     createUserMsg.className = "login-msg" + (cls ? " " + cls : "");
   }
-
+ 
   function openCreateUserModal() {
     if (!isAdmin()) return;
     createUserNameInput.value = "";
@@ -1118,11 +1118,11 @@
     createUserModal.style.display = "flex";
     setTimeout(function () { createUserNameInput.focus(); }, 80);
   }
-
+ 
   function closeCreateUserModal() {
     createUserModal.style.display = "none";
   }
-
+ 
   createUserModalClose.addEventListener("click", closeCreateUserModal);
   createUserModal.addEventListener("click", function (e) {
     if (e.target === createUserModal) closeCreateUserModal();
@@ -1130,7 +1130,7 @@
   createUserPassInput.addEventListener("keydown", function (e) {
     if (e.key === "Enter") createUserSubmitBtn.click();
   });
-
+ 
   createUserSubmitBtn.addEventListener("click", function () {
     if (!isAdmin()) return;
     var username = createUserNameInput.value.trim();
@@ -1143,10 +1143,10 @@
       setCreateUserMsg("Mật khẩu phải có ít nhất 6 ký tự.", "error");
       return;
     }
-
+ 
     createUserSubmitBtn.disabled = true;
     setCreateUserMsg("Đang tạo...", "");
-
+ 
     fetch("/admin/api/users", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -1172,5 +1172,5 @@
         setCreateUserMsg("Lỗi kết nối, thử lại.", "error");
       });
   });
-
+ 
 })();

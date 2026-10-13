@@ -1,6 +1,6 @@
 #include "led_blinky.h"
 #include "global.h"
-
+ 
 void led_blinky(void *pvParameters){
   pinMode(LED_GPIO, OUTPUT);
   
@@ -16,7 +16,7 @@ void led_blinky(void *pvParameters){
         else if (state == 2) delay_ms = 500;
         else delay_ms = 1000;
     }
-
+ 
     digitalWrite(LED_GPIO, HIGH);  
     
     if (ctx != NULL) {

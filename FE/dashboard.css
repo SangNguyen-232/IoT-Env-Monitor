@@ -6,10 +6,10 @@
   --border: rgba(255, 255, 255, 0.06);
   --text: #eef1f8;
   --text-muted: #828ba3;
-
+ 
   --accent: #3b6df0;
   --accent-soft: rgba(59, 109, 240, 0.16);
-
+ 
   --green: #2ecc71;
   --green-soft: rgba(46, 204, 113, 0.16);
   --orange: #f5a524;
@@ -22,16 +22,16 @@
   --blue-soft: rgba(74, 163, 255, 0.16);
   --teal: #2bd4c4;
   --teal-soft: rgba(43, 212, 196, 0.16);
-
+ 
   --c-temp: #f5a524;
   --c-humi: #4aa3ff;
   --c-soil: #2ecc71;
-
+ 
   --radius: 16px;
 }
-
+ 
 * { box-sizing: border-box; }
-
+ 
 html, body {
   margin: 0;
   padding: 0;
@@ -39,12 +39,12 @@ html, body {
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
-
+ 
 .app {
   display: flex;
   min-height: 100vh;
 }
-
+ 
 /* ---------- Sidebar ---------- */
 .sidebar {
   width: 220px;
@@ -56,14 +56,14 @@ html, body {
   flex-direction: column;
   gap: 28px;
 }
-
+ 
 .brand {
   display: flex;
   align-items: center;
   gap: 10px;
   padding: 0 8px;
 }
-
+ 
 .brand-mark {
   width: 30px;
   height: 30px;
@@ -76,18 +76,18 @@ html, body {
   font-size: 14px;
   color: #fff;
 }
-
+ 
 .brand-name {
   font-weight: 600;
   font-size: 15px;
 }
-
+ 
 .nav {
   display: flex;
   flex-direction: column;
   gap: 4px;
 }
-
+ 
 .nav-item {
   display: flex;
   align-items: center;
@@ -99,24 +99,24 @@ html, body {
   font-size: 14px;
   font-weight: 500;
 }
-
+ 
 .nav-item svg {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
 }
-
+ 
 .nav-item.active {
   background: var(--accent-soft);
   color: #fff;
   border: 1px solid rgba(59, 109, 240, 0.35);
 }
-
+ 
 .nav-item:not(.active):hover {
   background: rgba(255, 255, 255, 0.04);
   color: var(--text);
 }
-
+ 
 /* ---------- Content ---------- */
 .content {
   flex: 1;
@@ -126,19 +126,19 @@ html, body {
   gap: 18px;
   max-width: 980px;
 }
-
+ 
 .topbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
 }
-
+ 
 .topbar h1 {
   margin: 0;
   font-size: 22px;
   font-weight: 700;
 }
-
+ 
 .badge {
   display: inline-flex;
   align-items: center;
@@ -148,30 +148,30 @@ html, body {
   font-size: 12px;
   font-weight: 600;
 }
-
+ 
 .badge-status {
   background: var(--card);
   border: 1px solid var(--border);
   color: var(--text);
 }
-
+ 
 .dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   background: var(--text-muted);
 }
-
+ 
 .dot.online { background: var(--green); box-shadow: 0 0 6px var(--green); }
 .dot.offline { background: var(--red); }
-
+ 
 /* ---------- Stat cards ---------- */
 .stat-grid {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
   gap: 14px;
 }
-
+ 
 .stat-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -181,13 +181,13 @@ html, body {
   flex-direction: column;
   gap: 12px;
 }
-
+ 
 .stat-top {
   display: flex;
   align-items: center;
   gap: 10px;
 }
-
+ 
 .stat-icon {
   width: 30px;
   height: 30px;
@@ -197,27 +197,27 @@ html, body {
   justify-content: center;
   flex-shrink: 0;
 }
-
+ 
 .stat-icon svg { width: 16px; height: 16px; }
-
+ 
 .icon-temp { background: var(--orange-soft); color: var(--orange); }
 .icon-humi { background: var(--blue-soft); color: var(--blue); }
 .icon-soil { background: var(--green-soft); color: var(--green); }
 .icon-time { background: var(--purple-soft); color: var(--purple); }
 .icon-score { background: var(--purple-soft); color: var(--purple); }
-
+ 
 .stat-label {
   font-size: 12px;
   color: var(--text-muted);
   font-weight: 500;
   line-height: 1;
 }
-
+ 
 .stat-value {
   font-size: 20px;
   font-weight: 700;
 }
-
+ 
 .stat-sub {
   font-size: 20px;
   font-weight: 700;
@@ -226,11 +226,11 @@ html, body {
 .stat-sub.warning { color: var(--orange); }
 .stat-sub.critical { color: var(--red); }
 .stat-sub.normal { color: var(--green); }
-
+ 
 .val-normal   { color: var(--green); }
 .val-warning  { color: var(--orange); }
 .val-critical { color: var(--red); }
-
+ 
 /* ---------- Cards (chart / map) ---------- */
 .charts-row {
   display: grid;
@@ -238,21 +238,21 @@ html, body {
   gap: 14px;
   align-items: start;
 }
-
+ 
 .card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 18px;
 }
-
+ 
 .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 10px;
 }
-
+ 
 .card-header h2 {
   margin: 0;
   font-size: 14px;
@@ -261,25 +261,25 @@ html, body {
   align-items: center;
   gap: 8px;
 }
-
+ 
 .card-header h2 svg {
   width: 16px;
   height: 16px;
   color: var(--accent);
 }
-
+ 
 .refresh-tag {
   font-size: 12px;
   color: var(--text-muted);
 }
-
+ 
 .legend {
   display: flex;
   gap: 16px;
   margin-bottom: 10px;
   flex-wrap: wrap;
 }
-
+ 
 .legend-item {
   font-size: 12px;
   color: var(--text-muted);
@@ -287,19 +287,19 @@ html, body {
   align-items: center;
   gap: 6px;
 }
-
+ 
 .legend-item i {
   width: 9px;
   height: 9px;
   border-radius: 50%;
   display: inline-block;
 }
-
+ 
 .chart-wrap {
   height: 220px;
   position: relative;
 }
-
+ 
 /* Update the Map Container to support the AP Mode layer */
 .map-container {
   height: 245px;
@@ -307,12 +307,12 @@ html, body {
   border-radius: 12px;
   overflow: hidden;
 }
-
+ 
 #map {
   height: 100%;
   width: 100%;
 }
-
+ 
 .ap-overlay {
   position: absolute;
   top: 0;
@@ -328,14 +328,14 @@ html, body {
   font-weight: 600;
   color: var(--orange); 
 }
-
+ 
 /* ---------- Control rows (Pump / Mode) ---------- */
 .controls-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
-
+ 
 .control-row {
   background: var(--card);
   border: 1px solid var(--border);
@@ -345,14 +345,14 @@ html, body {
   align-items: center;
   justify-content: space-between;
 }
-
+ 
 .control-label {
   font-size: 13px;
   font-weight: 700;
   letter-spacing: 0.04em;
   color: var(--text-muted);
 }
-
+ 
 .badge-pump,
 .badge-mode {
   padding: 5px 18px;
@@ -361,13 +361,13 @@ html, body {
   font-weight: 700;
   letter-spacing: 0.03em;
 }
-
+ 
 .badge-pump.on { background: var(--green-soft); color: var(--green); }
 .badge-pump.off { background: rgba(255,255,255,0.06); color: var(--text-muted); }
-
+ 
 .badge-mode.manual { background: var(--orange-soft); color: var(--orange); }
 .badge-mode.auto { background: var(--blue-soft); color: var(--blue); }
-
+ 
 .btn-toggle {
   background: var(--accent);
   border: none;
@@ -378,17 +378,17 @@ html, body {
   border-radius: 9px;
   cursor: pointer;
 }
-
+ 
 .btn-toggle:hover { background: #4f7df5; }
 .btn-toggle:active { transform: translateY(1px); }
-
+ 
 /* ---------- Responsive ---------- */
 @media (max-width: 880px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .charts-row { grid-template-columns: 1fr; }
   .controls-row { grid-template-columns: 1fr; }
 }
-
+ 
 @media (max-width: 720px) {
   .app { flex-direction: column; }
   .sidebar {
@@ -400,7 +400,7 @@ html, body {
   .nav { flex-direction: row; }
   .content { padding: 18px; }
 }
-
+ 
 /* ---------- Settings Modal (WiFi config) ---------- */
 .modal-overlay {
   position: fixed;
@@ -411,7 +411,7 @@ html, body {
   justify-content: center;
   z-index: 2000;
 }
-
+ 
 .modal-box {
   background: var(--card);
   border: 1px solid var(--border);
@@ -420,19 +420,19 @@ html, body {
   width: 90%;
   max-width: 360px;
 }
-
+ 
 .modal-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: 14px;
 }
-
+ 
 .modal-header h2 {
   margin: 0;
   font-size: 16px;
 }
-
+ 
 .modal-close {
   background: none;
   border: none;
@@ -440,18 +440,18 @@ html, body {
   font-size: 20px;
   cursor: pointer;
 }
-
+ 
 .modal-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
-
+ 
 .modal-form label {
   font-size: 12px;
   color: var(--text-muted);
 }
-
+ 
 .modal-form input {
   padding: 8px 10px;
   border-radius: 8px;
@@ -460,19 +460,19 @@ html, body {
   color: var(--text);
   font-size: 14px;
 }
-
+ 
 /* ── Password show/hide wrapper ── */
 .pwd-wrap {
   position: relative;
   display: flex;
   align-items: center;
 }
-
+ 
 .pwd-wrap input {
   width: 100%;
   padding-right: 36px;
 }
-
+ 
 .btn-eye {
   position: absolute;
   right: 9px;
@@ -486,12 +486,42 @@ html, body {
   line-height: 1;
   transition: color 0.15s;
 }
-
+ 
 .btn-eye:hover { color: var(--text); }
 .btn-eye svg { width: 15px; height: 15px; }
-
+ 
 .settings-msg {
   margin-top: 10px;
   font-size: 13px;
   color: var(--text-muted);
+}
+ 
+/* ─── Responsive: phone / tablet / touch ─── */
+.content { min-width: 0; }
+.charts-row > * { min-width: 0; }
+ 
+/* Tablet ngang: 5 cột quá hẹp */
+@media (min-width: 881px) and (max-width: 1100px) {
+  .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+ 
+.modal-box {
+  max-height: 90vh;
+  max-height: 90dvh;
+  overflow-y: auto;
+}
+ 
+@media (pointer: coarse) {
+  .btn-toggle { min-height: 40px; }
+}
+ 
+@media (max-width: 720px) {
+  .modal-form input { font-size: 16px; }
+}
+ 
+/* Phone nhỏ: sidebar chỉ còn icon để không tràn ngang */
+@media (max-width: 480px) {
+  .brand-name, .nav-item span { display: none; }
+  .nav-item { padding: 10px; }
+  .stat-value, .stat-sub { font-size: 18px; }
 }

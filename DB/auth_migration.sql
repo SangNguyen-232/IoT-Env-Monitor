@@ -7,13 +7,13 @@ CREATE TABLE IF NOT EXISTS system_users (
   role       TEXT NOT NULL CHECK (role IN ('admin', 'user')),
   created_at TIMESTAMP DEFAULT NOW()
 );
-
+ 
 CREATE TABLE IF NOT EXISTS user_devices (
   user_id   INTEGER NOT NULL REFERENCES system_users(id) ON DELETE CASCADE,
   device_id TEXT    NOT NULL,
   PRIMARY KEY (user_id, device_id)
 );
-
+ 
 DO $$
 BEGIN
   IF EXISTS (SELECT FROM pg_roles WHERE rolname = 'iot_user') THEN

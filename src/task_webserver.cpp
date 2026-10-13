@@ -4,9 +4,18 @@
 #include "global.h"
 #include "task_check_info.h"
 #include "secrets.h"
-
+ 
+static bool isAPMode()
+{
+    return (WiFi.getMode() == WIFI_AP) || (WiFi.getMode() == WIFI_AP_STA && WiFi.status() != WL_CONNECTED);
+}
+ 
 static bool requireDeviceAuth(AsyncWebServerRequest *request)
 {
+    // Ở chế độ AP Mode: mạng đã có mật khẩu Wi-Fi AP (WPA2).
+    // Bỏ qua Basic Auth để Apple Captive Assistant trên iPhone không bị chặn màn hình trắng.
+    if (isAPMode()) return true;
+ 
     if (!request->authenticate(DEVICE_HTTP_USER, DEVICE_HTTP_PASS))
     {
         request->requestAuthentication();
@@ -14,23 +23,23 @@ static bool requireDeviceAuth(AsyncWebServerRequest *request)
     }
     return true;
 }
-
+ 
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
-
+ 
 bool webserver_isrunning = false;
-
+ 
 String global_pump_state = "OFF"; 
 String global_pump_mode = "AUTO"; 
 String global_admin_ip = "";
-
+ 
 static SharedContext* s_ctx = nullptr;
-
+ 
 void Webserver_init_ctx(SharedContext* ctx)
 {
     s_ctx = ctx;
 }
-
+ 
 void Webserver_sendata(String data)
 {
     if (ws.count() > 0)
@@ -38,7 +47,7 @@ void Webserver_sendata(String data)
         ws.textAll(data);
     }
 }
-
+ 
 static void captureAdminIp(AsyncWebServerRequest *request)
 {
     String ip = request->client()->remoteIP().toString();
@@ -47,7 +56,7 @@ static void captureAdminIp(AsyncWebServerRequest *request)
         global_admin_ip = ip;
     }
 }
-
+ 
 void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
 {
     if (type == WS_EVT_CONNECT)
@@ -58,7 +67,7 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
             global_admin_ip = ip;
         }
         Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
-
+ 
         String pumpState, pumpMode;
         if (xSemaphoreTake(xMutexPumpControl, pdMS_TO_TICKS(200)) == pdTRUE) {
             pumpState = global_pump_state;
@@ -75,7 +84,7 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
     else if (type == WS_EVT_DATA)
     {
         AwsFrameInfo *info = (AwsFrameInfo *)arg;
-
+ 
         if (info->opcode == WS_TEXT)
         {
             String message;
@@ -84,17 +93,15 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
         }
     }
 }
-
+ 
 void connnectWSV()
 {
     ws.onEvent(onEvent);
-    ws.setAuthentication(DEVICE_HTTP_USER, DEVICE_HTTP_PASS);
     server.addHandler(&ws);
-
+ 
     server.serveStatic("/", LittleFS, "/")
-        .setDefaultFile("dashboard.html")
-        .setAuthentication(DEVICE_HTTP_USER, DEVICE_HTTP_PASS);
-
+        .setDefaultFile("dashboard.html");
+ 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
@@ -102,7 +109,7 @@ void connnectWSV()
         String json = "{\"mqtt_connected\": false, \"is_ap_mode\": " + String(is_ap_mode ? "true" : "false") + "}"; 
         request->send(200, "application/json", json);
     });
-
+ 
     server.on("/toggle-pump", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
@@ -112,7 +119,7 @@ void connnectWSV()
             temp_state = request->getParam("state")->value();
             temp_state.toUpperCase();
         }
-
+ 
         String current_state, current_mode;
         if (xSemaphoreTake(xMutexPumpControl, portMAX_DELAY) == pdTRUE) {
             if (has_param) {
@@ -124,19 +131,19 @@ void connnectWSV()
             global_pump_mode = "MANUAL";
             pump_manual_control = true;
             pump_manual_state = (global_pump_state == "ON");
-
+ 
             current_state = global_pump_state;
             current_mode = global_pump_mode;
             xSemaphoreGive(xMutexPumpControl);
         }
-
+ 
         Webserver_sendata("{\"pump_state\":\"" + current_state + "\",\"pump_mode\":\"" + current_mode + "\"}");
-
+ 
         if (s_ctx != nullptr) xSemaphoreGive(s_ctx->semDBUpdate);
-
+ 
         request->send(200, "text/plain", current_state);
     });
-
+ 
     server.on("/set-mode", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
@@ -146,7 +153,7 @@ void connnectWSV()
             temp_mode = request->getParam("mode")->value();
             temp_mode.toUpperCase();
         }
-
+ 
         String current_state, current_mode;
         if (xSemaphoreTake(xMutexPumpControl, portMAX_DELAY) == pdTRUE) {
             if (has_param) {
@@ -154,24 +161,24 @@ void connnectWSV()
             } else {
                 global_pump_mode = (global_pump_mode == "MANUAL") ? "AUTO" : "MANUAL";
             }
-
+ 
             pump_manual_control = (global_pump_mode == "MANUAL");
             if (pump_manual_control) {
                 pump_manual_state = (global_pump_state == "ON");
             }
-
+ 
             current_state = global_pump_state;
             current_mode = global_pump_mode;
             xSemaphoreGive(xMutexPumpControl);
         }
-
+ 
         Webserver_sendata("{\"pump_state\":\"" + current_state + "\",\"pump_mode\":\"" + current_mode + "\"}");
-
+ 
         if (s_ctx != nullptr) xSemaphoreGive(s_ctx->semDBUpdate);
-
+ 
         request->send(200, "text/plain", current_mode);
     });
-
+ 
     server.on("/api/wifi-list", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
@@ -189,7 +196,7 @@ void connnectWSV()
         serializeJson(outDoc, out);
         request->send(200, "application/json", out);
     });
-
+ 
     server.on("/api/server-url", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
@@ -199,7 +206,7 @@ void connnectWSV()
         serializeJson(doc, out);
         request->send(200, "application/json", out);
     });
-
+ 
     server.on("/api/server-url", HTTP_POST,
         [](AsyncWebServerRequest *request) {},
         nullptr,
@@ -209,7 +216,7 @@ void connnectWSV()
             if (index == 0) bodyBuf = "";
             for (size_t i = 0; i < len; i++) bodyBuf += (char)data[i];
             if (index + len < total) return;
-
+ 
             StaticJsonDocument<512> doc;
             if (deserializeJson(doc, bodyBuf) != DeserializationError::Ok) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
@@ -226,7 +233,7 @@ void connnectWSV()
             request->send(200, "application/json", "{\"ok\":true}");
         }
     );
-
+ 
     server.on("/api/wifi-switch", HTTP_POST,
         [](AsyncWebServerRequest *request) {},
         nullptr,
@@ -236,7 +243,7 @@ void connnectWSV()
             if (index == 0) bodyBuf = "";
             for (size_t i = 0; i < len; i++) bodyBuf += (char)data[i];
             if (index + len < total) return;
-
+ 
             StaticJsonDocument<256> doc;
             if (deserializeJson(doc, bodyBuf) != DeserializationError::Ok) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
@@ -258,19 +265,47 @@ void connnectWSV()
             request->send(200, "application/json", "{\"ok\":true}");
         }
     );
-
+ 
+    // Captive Portal Redirect Endpoints cho iOS, Android, Windows
+    auto captiveRedirect = [](AsyncWebServerRequest *request) {
+        request->redirect("http://192.168.4.1/");
+    };
+    server.on("/hotspot-detect.html", HTTP_GET, captiveRedirect);
+    server.on("/generate_204", HTTP_GET, captiveRedirect);
+    server.on("/gen_204", HTTP_GET, captiveRedirect);
+    server.on("/ncsi.txt", HTTP_GET, captiveRedirect);
+    server.on("/connecttest.txt", HTTP_GET, captiveRedirect);
+    server.on("/redirect", HTTP_GET, captiveRedirect);
+    server.on("/canonical.html", HTTP_GET, captiveRedirect);
+    server.on("/success.txt", HTTP_GET, captiveRedirect);
+ 
+    server.onNotFound([](AsyncWebServerRequest *request) {
+        String url = request->url();
+        if (url.endsWith(".ico") || url.endsWith(".png") || url.endsWith(".jpg") || 
+            url.endsWith(".css") || url.endsWith(".js") || url.endsWith(".map") ||
+            url == "/" || url == "/dashboard.html") {
+            request->send(404, "text/plain", "Not found");
+            return;
+        }
+        if (isAPMode()) {
+            request->redirect("http://192.168.4.1/");
+        } else {
+            request->send(404, "text/plain", "Not found");
+        }
+    });
+ 
     server.begin();
     ElegantOTA.begin(&server, DEVICE_HTTP_USER, DEVICE_HTTP_PASS);
     webserver_isrunning = true;
 }
-
+ 
 void Webserver_stop()
 {
     ws.closeAll();
     server.end();
     webserver_isrunning = false;
 }
-
+ 
 void Webserver_reconnect()
 {
     if (!webserver_isrunning)

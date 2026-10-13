@@ -1,11 +1,11 @@
 #ifndef __GLOBAL_H__
 #define __GLOBAL_H__
-
+ 
 #include <Arduino.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
-
+ 
 struct SharedContext {
     float temperature;
     float humidity;
@@ -27,22 +27,22 @@ struct SharedContext {
     float mlRollAcc;
     char dbTriggerSource[8];   // "sensor" | "pump"
 };
-
+ 
 extern float glob_temperature;
 extern float glob_humidity;
 extern float glob_soil;
 extern volatile unsigned long g_lastDBPostMs_sensor;
 extern volatile unsigned long g_lastDBPostMs_pump;
 extern volatile bool g_pumpEventPending;
-
+ 
 extern String wifi_ssid;
 extern String wifi_pass;
-
+ 
 extern boolean isWifiConnected;
 extern SemaphoreHandle_t xBinarySemaphoreInternet;
-
+ 
 extern volatile bool g_wifiSwitchFlag;
 extern String g_wifiSwitchSSID;
 extern String g_wifiSwitchPass;
-
+ 
 #endif
