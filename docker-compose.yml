@@ -1,5 +1,5 @@
 services:
- 
+
   # ─── PostgreSQL Database ────────────────────────────────────
   postgres:
     container_name: iot_postgres
@@ -23,7 +23,12 @@ services:
       interval: 5s
       timeout: 5s
       retries: 10
- 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
   # ─── Node.js Backend ────────────────────────────────────────
   backend:
     container_name: iot_backend
@@ -31,8 +36,9 @@ services:
       context: ./BE
       dockerfile: Dockerfile
     restart: unless-stopped
-    ports:
-      - "3000:3000"
+    # Không publish cổng 3000 ra host/LAN — chỉ cloudflared truy cập nội bộ
+    expose:
+      - "3000"
     env_file:
       - .env
     environment:
@@ -45,6 +51,7 @@ services:
       SENSOR_API_KEY: ${SENSOR_API_KEY:?Set SENSOR_API_KEY in .env}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
+      TRUST_PROXY: "1"
     depends_on:
       postgres:
         condition: service_healthy
@@ -56,11 +63,35 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
- 
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # ─── Cloudflare Tunnel ──────────────────────────────────────
+  cloudflared:
+    container_name: iot_cloudflared
+    image: cloudflare/cloudflared:latest
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:?Set CLOUDFLARE_TUNNEL_TOKEN in .env}
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - iot_net
+    logging:
+      driver: json-file
+      options:
+        max-size: "5m"
+        max-file: "2"
+
 networks:
   iot_net:
     driver: bridge
- 
+
 volumes:
   pgdata:
     driver: local

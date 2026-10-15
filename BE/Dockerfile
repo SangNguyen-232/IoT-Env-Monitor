@@ -1,20 +1,18 @@
-# Dùng Node.js 20 trên Alpine Linux (image nhỏ gọn)
 FROM node:20-alpine
 
-# Tạo thư mục làm việc trong container
+RUN apk add --no-cache tzdata
+ENV TZ=Asia/Ho_Chi_Minh \
+    NODE_ENV=production
+
 WORKDIR /app
 
-# Copy package.json và package-lock.json trước (tận dụng Docker cache)
 COPY package*.json ./
+RUN npm ci --omit=dev
 
-# Cài dependencies (chỉ production)
-RUN npm install --omit=dev
+COPY --chown=node:node . .
 
-# Copy toàn bộ source code backend vào container
-COPY . .
-
-# Expose port 3000
 EXPOSE 3000
 
-# Lệnh khởi động server
+USER node
+
 CMD ["node", "index.js"]

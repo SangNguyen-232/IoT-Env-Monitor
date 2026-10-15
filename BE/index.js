@@ -43,6 +43,10 @@ if (!sensorApiKey) {
 }
  
 const app = express();
+const tp = process.env.TRUST_PROXY;
+if (tp) {
+  app.set('trust proxy', tp === 'true' ? true : tp === 'false' ? false : /^\d+$/.test(tp) ? parseInt(tp, 10) : tp);
+}
 // CSP tắt vì admin.html / login.html dùng script/style inline và cần ws:// tới ESP32
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '32kb' }));
@@ -66,7 +70,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: 'lax',
-    secure: process.env.NODE_ENV === 'production',
+    secure: 'auto',
     maxAge: 8 * 60 * 60 * 1000
   }
 }));
@@ -360,15 +364,22 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
 app.get('/admin/api/devices', requireLogin, async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT DISTINCT ON (device_id)
-        device_id, lan_ip, temperature, humidity, soil_moisture,
-        "PUMP_state", "MODE_state", "Message", "Score",
-        timestamp_real AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_real,
-        timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_up,
-        COALESCE(received_at, timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') AT TIME ZONE 'Asia/Ho_Chi_Minh' AS received_at
-      FROM sensor_logs
-      WHERE $1::boolean OR device_id IN (SELECT device_id FROM user_devices WHERE user_id = $2)
-      ORDER BY device_id, COALESCE(received_at, timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') DESC
+      SELECT * FROM (
+        SELECT DISTINCT ON (s.device_id, COALESCE(s.lan_ip, ''))
+          s.device_id, s.lan_ip,
+          (s.device_id || CASE WHEN s.lan_ip IS NOT NULL AND s.lan_ip <> '' THEN '_' || s.lan_ip ELSE '' END) AS card_key,
+          s.temperature, s.humidity, s.soil_moisture,
+          s."PUMP_state", s."MODE_state", s."Message", s."Score",
+          s.timestamp_real AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_real,
+          s.timestamp_up   AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_up,
+          COALESCE(s.received_at, s.timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') AS received_at,
+          EXTRACT(EPOCH FROM (NOW() - COALESCE(s.received_at, s.timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh')))::float8 AS age_seconds
+        FROM sensor_logs s
+        WHERE s.device_id IS NOT NULL
+          AND ($1::boolean OR s.device_id IN (SELECT device_id FROM user_devices WHERE user_id = $2))
+        ORDER BY s.device_id, COALESCE(s.lan_ip, ''), COALESCE(s.received_at, s.timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') DESC
+      ) sub
+      ORDER BY sub.device_id, sub.received_at DESC
     `, [req.session.user.role === 'admin', req.session.user.id]);
     res.json(result.rows);
   } catch (err) {
@@ -404,7 +415,12 @@ app.get('/admin/api/devices/:device_id/history', requireLogin, async (req, res) 
 app.delete('/admin/api/devices/:device_id', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { device_id } = req.params;
-    await pool.query('DELETE FROM sensor_logs WHERE device_id = $1', [device_id]);
+    const { lan_ip } = req.query;
+    if (lan_ip) {
+      await pool.query('DELETE FROM sensor_logs WHERE device_id = $1 AND lan_ip = $2', [device_id, lan_ip]);
+    } else {
+      await pool.query('DELETE FROM sensor_logs WHERE device_id = $1', [device_id]);
+    }
     res.sendStatus(200);
   } catch (err) {
     console.error(err);
@@ -443,7 +459,60 @@ app.post('/admin/api/devices/:device_id/verify', requireLogin, rateLimitLogin, a
     res.status(500).json({ error: err.message });
   }
 });
- 
+
+// ─── Device ticket: BE ký HMAC, ESP32 verify ─────────────────────────────
+const TICKET_TTL_MS = 5 * 60 * 1000; // 5 phút
+
+function makeDeviceTicket(deviceId, lanIp) {
+  const expiresAt = Date.now() + TICKET_TTL_MS;
+  const payload = `${deviceId}:${lanIp}:${expiresAt}`;
+  const sig = crypto.createHmac('sha256', sensorApiKey).update(payload).digest('hex');
+  const raw = Buffer.from(JSON.stringify({ payload, sig })).toString('base64url');
+  return { ticket: raw, expiresAt };
+}
+
+app.post('/admin/api/devices/:device_id/ticket', requireLogin, rateLimitLogin, async (req, res) => {
+  try {
+    const { device_id } = req.params;
+    if (!(await userCanAccessDevice(req, device_id))) {
+      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+    }
+    const { password } = req.body;
+    const credResult = await pool.query(
+      'SELECT password FROM device_credentials WHERE device_id = $1',
+      [device_id]
+    );
+    if (credResult.rows.length === 0) return res.json({ ok: false, reason: 'no_password' });
+    if (!password) return res.json({ ok: false });
+    const check = await verifyPassword(password, credResult.rows[0].password);
+    if (!check.ok) {
+      recordLoginFailure(req);
+      return res.json({ ok: false });
+    }
+    clearLoginFailures(req);
+    if (check.rehash) {
+      await pool.query(
+        'UPDATE device_credentials SET password = $1 WHERE device_id = $2',
+        [await hashPassword(password), device_id]
+      );
+    }
+    // Lấy lan_ip gần nhất của thiết bị hoặc từ body nếu có
+    let lanIp = req.body && req.body.lan_ip ? String(req.body.lan_ip).trim() : '';
+    if (!lanIp) {
+      const ipRow = await pool.query(
+        'SELECT lan_ip FROM sensor_logs WHERE device_id = $1 AND lan_ip IS NOT NULL ORDER BY received_at DESC LIMIT 1',
+        [device_id]
+      );
+      lanIp = (ipRow.rows[0] && ipRow.rows[0].lan_ip) || '';
+    }
+    const { ticket, expiresAt } = makeDeviceTicket(device_id, lanIp);
+    res.json({ ok: true, ticket, expiresAt, lanIp });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ─── Access requests (in-memory): User xin vào thiết bị chưa có mật khẩu ───
 const ACCESS_REQ_PENDING_TTL_MS = 5 * 60 * 1000;
 const ACCESS_REQ_DECIDED_TTL_MS = 2 * 60 * 1000;

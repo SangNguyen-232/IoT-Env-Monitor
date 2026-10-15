@@ -401,6 +401,17 @@
       }
     };
  
+    ws.onopen = function () {
+      fetch("/api/ws-token")
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d && d.token && ws.readyState === WebSocket.OPEN) {
+            ws.send(JSON.stringify({ page: "auth", token: d.token }));
+          }
+        })
+        .catch(function () {});
+    };
+
     ws.onclose = function () {
       setTimeout(connectWS, 2000);
     };

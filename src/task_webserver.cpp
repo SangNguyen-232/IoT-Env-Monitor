@@ -1,15 +1,132 @@
 #include "task_webserver.h"
 #include <WiFi.h>
+#include <esp_system.h>
+#include <mbedtls/md.h>
+#include <mbedtls/base64.h>
+#include <errno.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <vector>
 #include "pump.h"
 #include "global.h"
 #include "task_check_info.h"
 #include "secrets.h"
+
+#ifndef OTA_HTTP_USER
+#define OTA_HTTP_USER DEVICE_HTTP_USER
+#endif
+#ifndef OTA_HTTP_PASS
+#define OTA_HTTP_PASS DEVICE_HTTP_PASS
+#endif
  
 static bool isAPMode()
 {
     return (WiFi.getMode() == WIFI_AP) || (WiFi.getMode() == WIFI_AP_STA && WiFi.status() != WL_CONNECTED);
 }
  
+// Verify HMAC-SHA256 ticket do backend cấp (mục 3B).
+// ticket là base64url(JSON{payload,sig}).
+// payload = "<device_id>:<lan_ip>:<expiresAt_ms>"
+// sig = HMAC-SHA256(SENSOR_API_KEY, payload) hex
+static bool verifyTicket(const String &ticketB64)
+{
+    // Giới hạn kích thước đầu vào để tránh cấp phát bộ nhớ quá lớn trên ESP32.
+    if (ticketB64.isEmpty() || ticketB64.length() > 1400) return false;
+
+    // Chuyển Base64URL sang Base64 chuẩn.
+    String b64 = ticketB64;
+    b64.replace('-', '+');
+    b64.replace('_', '/');
+    if (b64.length() % 4 == 1) return false;
+    while (b64.length() % 4 != 0) b64 += '=';
+
+    // Dùng API Mbed TLS đi kèm framework ESP32 (không dùng base64::decode).
+    std::vector<unsigned char> decodedBuf((b64.length() * 3) / 4 + 1);
+    size_t decodedLen = 0;
+    int ret = mbedtls_base64_decode(
+        decodedBuf.data(),
+        decodedBuf.size() - 1,
+        &decodedLen,
+        reinterpret_cast<const unsigned char *>(b64.c_str()),
+        b64.length()
+    );
+    if (ret != 0 || decodedLen == 0) return false;
+    decodedBuf[decodedLen] = '\0';
+
+    // Parse JSON đúng chuẩn, không tìm trường bằng thao tác chuỗi thủ công.
+    StaticJsonDocument<512> doc;
+    if (deserializeJson(doc, reinterpret_cast<const char *>(decodedBuf.data()), decodedLen)
+            != DeserializationError::Ok) return false;
+
+    const char *payloadText = doc["payload"];
+    const char *sigText = doc["sig"];
+    if (payloadText == nullptr || sigText == nullptr) return false;
+
+    String payload(payloadText);
+    String sigHex(sigText);
+    if (payload.isEmpty() || sigHex.length() != 64) return false;
+
+    // Ticket phải được cấp cho đúng thiết bị này (device_id = MAC, khớp task_database.cpp).
+    if (!payload.startsWith(WiFi.macAddress() + ":")) return false;
+
+    // Payload có dạng: <device_id>:<lan_ip>:<expiresAt_ms>.
+    const int firstColon = payload.indexOf(':');
+    const int lastColon = payload.lastIndexOf(':');
+    if (firstColon <= 0 || lastColon <= firstColon + 1 ||
+        lastColon >= static_cast<int>(payload.length()) - 1) return false;
+
+    const String expiresText = payload.substring(lastColon + 1);
+    errno = 0;
+    char *endPtr = nullptr;
+    const long long expiresAtMs = strtoll(expiresText.c_str(), &endPtr, 10);
+    if (errno == ERANGE || endPtr == expiresText.c_str() ||
+        endPtr == nullptr || *endPtr != '\0' || expiresAtMs <= 0) return false;
+
+    // Từ chối khi chưa đồng bộ thời gian: nếu không có giờ tin cậy,
+    // ESP32 không thể kiểm tra ticket đã hết hạn hay chưa.
+    const time_t nowSec = time(nullptr);
+    if (nowSec < static_cast<time_t>(1577836800)) return false; // 2020-01-01 UTC
+    const long long nowMs = static_cast<long long>(nowSec) * 1000LL;
+    if (nowMs >= expiresAtMs) return false;
+
+    // Kiểm tra HMAC-SHA256 với khóa chia sẻ giữa ESP32 và backend.
+    const char *key = SENSOR_API_KEY;
+    if (key == nullptr || key[0] == '\0') return false;
+
+    const mbedtls_md_info_t *info = mbedtls_md_info_from_type(MBEDTLS_MD_SHA256);
+    if (info == nullptr) return false;
+
+    unsigned char hmacOut[32];
+    mbedtls_md_context_t ctx_md;
+    mbedtls_md_init(&ctx_md);
+    bool hmacOk = false;
+    if (mbedtls_md_setup(&ctx_md, info, 1) == 0 &&
+        mbedtls_md_hmac_starts(&ctx_md,
+            reinterpret_cast<const unsigned char *>(key), strlen(key)) == 0 &&
+        mbedtls_md_hmac_update(&ctx_md,
+            reinterpret_cast<const unsigned char *>(payload.c_str()), payload.length()) == 0 &&
+        mbedtls_md_hmac_finish(&ctx_md, hmacOut) == 0)
+    {
+        hmacOk = true;
+    }
+    mbedtls_md_free(&ctx_md);
+    if (!hmacOk) return false;
+
+    char expected[65];
+    for (int i = 0; i < 32; ++i) {
+        snprintf(expected + i * 2, 3, "%02x", hmacOut[i]);
+    }
+    expected[64] = '\0';
+
+    // Chỉ chấp nhận chữ ký đúng 64 ký tự hex; so sánh không dừng sớm.
+    uint8_t diff = 0;
+    for (int i = 0; i < 64; ++i) {
+        diff |= static_cast<uint8_t>(expected[i] ^ sigHex[i]);
+    }
+    return diff == 0;
+}
+
 static bool requireDeviceAuth(AsyncWebServerRequest *request)
 {
     // Ở chế độ AP Mode: mạng đã có mật khẩu Wi-Fi AP (WPA2).
@@ -34,6 +151,23 @@ String global_pump_mode = "AUTO";
 String global_admin_ip = "";
  
 static SharedContext* s_ctx = nullptr;
+
+static String s_wsToken = "";
+static unsigned long s_wsTokenUntil = 0;
+static uint32_t s_wsAuthIds[8] = {0};
+
+static bool wsIsAuth(uint32_t id)
+{
+    for (int i = 0; i < 8; i++) if (s_wsAuthIds[i] == id) return true;
+    return false;
+}
+
+static void wsSetAuth(uint32_t id, bool on)
+{
+    for (int i = 0; i < 8; i++) if (s_wsAuthIds[i] == id) s_wsAuthIds[i] = 0;
+    if (!on) return;
+    for (int i = 0; i < 8; i++) if (s_wsAuthIds[i] == 0) { s_wsAuthIds[i] = id; return; }
+}
  
 void Webserver_init_ctx(SharedContext* ctx)
 {
@@ -79,6 +213,7 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
     }
     else if (type == WS_EVT_DISCONNECT)
     {
+        wsSetAuth(client->id(), false);
         Serial.printf("WebSocket client #%u disconnected\n", client->id());
     }
     else if (type == WS_EVT_DATA)
@@ -89,6 +224,21 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
         {
             String message;
             message += String((char *)data).substring(0, len);
+
+            DynamicJsonDocument hdr(1024);
+            if (deserializeJson(hdr, message) != DeserializationError::Ok) return;
+            String page = hdr["page"] | String("");
+            if (page == "auth")
+            {
+                String tk = hdr["token"] | String("");
+                if (!s_wsToken.isEmpty() && tk == s_wsToken && (long)(millis() - s_wsTokenUntil) < 0)
+                {
+                    wsSetAuth(client->id(), true);
+                    s_wsToken = "";
+                }
+                return;
+            }
+            if (!wsIsAuth(client->id())) return;
             handleWebSocketMessage(message);
         }
     }
@@ -99,8 +249,30 @@ void connnectWSV()
     ws.onEvent(onEvent);
     server.addHandler(&ws);
  
+    // Route GET / luôn yêu cầu Basic Auth (không dùng ticket).
+    server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireDeviceAuth(request)) return;
+        request->send(LittleFS, "/dashboard.html", "text/html");
+    });
+
+    // Không cho phép /dashboard.html truy cập trực tiếp mà bỏ qua Basic Auth.
+    // Ticket chỉ được xử lý tại route "/" phía trên.
+    server.on("/dashboard.html", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireDeviceAuth(request)) return;
+        request->send(LittleFS, "/dashboard.html", "text/html");
+    });
+
     server.serveStatic("/", LittleFS, "/")
-        .setDefaultFile("dashboard.html");
+        .setDefaultFile("dashboard.html")
+        .setFilter([](AsyncWebServerRequest *request) {
+            String u = request->url();
+            u.toLowerCase();
+            return !(u == "/dashboard.html" ||
+                     u.indexOf("info.dat") >= 0 ||
+                     u.indexOf("wifi_list.json") >= 0 ||
+                     u.indexOf("wifi_info.json") >= 0 ||
+                     u.indexOf("server.json") >= 0);
+        });
  
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
@@ -108,6 +280,18 @@ void connnectWSV()
         bool is_ap_mode = (WiFi.getMode() == WIFI_AP) || (WiFi.getMode() == WIFI_AP_STA && WiFi.status() != WL_CONNECTED);
         String json = "{\"mqtt_connected\": false, \"is_ap_mode\": " + String(is_ap_mode ? "true" : "false") + "}"; 
         request->send(200, "application/json", json);
+    });
+
+    server.on("/api/ws-token", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireDeviceAuth(request)) return;
+        captureAdminIp(request);
+        char buf[33];
+        snprintf(buf, sizeof(buf), "%08x%08x%08x%08x",
+                 (unsigned)esp_random(), (unsigned)esp_random(),
+                 (unsigned)esp_random(), (unsigned)esp_random());
+        s_wsToken = String(buf);
+        s_wsTokenUntil = millis() + 30000UL;
+        request->send(200, "application/json", "{\"token\":\"" + s_wsToken + "\"}");
     });
  
     server.on("/toggle-pump", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -295,7 +479,7 @@ void connnectWSV()
     });
  
     server.begin();
-    ElegantOTA.begin(&server, DEVICE_HTTP_USER, DEVICE_HTTP_PASS);
+    ElegantOTA.begin(&server, OTA_HTTP_USER, OTA_HTTP_PASS);
     webserver_isrunning = true;
 }
  

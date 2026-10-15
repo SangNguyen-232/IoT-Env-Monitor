@@ -96,6 +96,11 @@
     return window.location.protocol === "http:";
   }
  
+  function getCardKey(device) {
+    if (!device) return "";
+    return device.card_key || (device.device_id + (device.lan_ip ? ("_" + device.lan_ip) : ""));
+  }
+
   function lanHost(device) {
     return device && device.lan_ip ? device.lan_ip : "";
   }
@@ -103,19 +108,19 @@
   function connectDeviceWS(device) {
     if (!canUseLanSockets()) return;
     var host = lanHost(device);
-    var deviceId = device.device_id;
+    var cardKey = getCardKey(device);
     if (!host) return;
-    if (deviceWsMap[deviceId]) {
-      var s = deviceWsMap[deviceId].readyState;
+    if (deviceWsMap[cardKey]) {
+      var s = deviceWsMap[cardKey].readyState;
       if (s === WebSocket.OPEN || s === WebSocket.CONNECTING) return;
     }
     var ws = new WebSocket("ws://" + host + "/ws");
-    deviceWsMap[deviceId] = ws;
+    deviceWsMap[cardKey] = ws;
  
     ws.onmessage = function (evt) {
       var data;
       try { data = JSON.parse(evt.data); } catch (e) { return; }
-      var card = document.querySelector(".device-card[data-device-id='" + String(deviceId).replace(/['\\]/g, "") + "']");
+      var card = document.querySelector(".device-card[data-card-key='" + String(cardKey).replace(/['\\]/g, "") + "']");
       if (!card) return;
  
       if (typeof data.temperature === "number") {
@@ -144,9 +149,9 @@
       };
  
     ws.onclose = function () {
-      delete deviceWsMap[deviceId];
+      delete deviceWsMap[cardKey];
       setTimeout(function () {
-        var next = currentDevices.find(function (d) { return d.device_id === deviceId; });
+        var next = currentDevices.find(function (d) { return getCardKey(d) === cardKey; });
         if (next) connectDeviceWS(next);
       }, 3000);
     };
@@ -156,7 +161,7 @@
   function syncDeviceWsSessions() {
     currentDevices.forEach(function (d) { connectDeviceWS(d); });
     Object.keys(deviceWsMap).forEach(function (id) {
-      if (!currentDevices.some(function (d) { return d.device_id === id; })) {
+      if (!currentDevices.some(function (d) { return getCardKey(d) === id; })) {
         try { deviceWsMap[id].close(); } catch (e) {}
         delete deviceWsMap[id];
       }
@@ -211,6 +216,9 @@
  
   function getTimestampMs(device) {
     if (!device) return null;
+    if (typeof device.age_seconds === "number" && device._fetchedAt) {
+      return device._fetchedAt - device.age_seconds * 1000;
+    }
     var raw = device.received_at || device.timestamp_up;
     if (!raw) return null;
     var ts = new Date(raw).getTime();
@@ -218,7 +226,7 @@
   }
  
   function updateStaleState(device) {
-    var id = device.device_id;
+    var id = getCardKey(device);
     if (!device.received_at && !device.timestamp_up) {
       delete countdownStart[id];
       return;
@@ -254,7 +262,7 @@
     var timestampMs = getTimestampMs(device);
     if (timestampMs === null) return false;
  
-    var state = getCountdownState(device.device_id);
+    var state = getCountdownState(getCardKey(device));
     if (state !== null) return state.isOnline;
  
     var age = Date.now() - timestampMs;
@@ -302,7 +310,7 @@
       if (isAllSelected) {
         selectedDeviceIds = [];
       } else {
-        selectedDeviceIds = currentDevices.map(function (d) { return d.device_id; });
+        selectedDeviceIds = currentDevices.map(function (d) { return getCardKey(d); });
       }
       renderGrid(currentDevices);
       renderActionBar();
@@ -313,19 +321,25 @@
         if (!confirm("Xóa toàn bộ dữ liệu của " + selectedDeviceIds.length + " thiết bị đã chọn?")) return;
  
         var deletePromises = selectedDeviceIds.map(function (id) {
-          return fetch("/admin/api/devices/" + encodeURIComponent(id), { method: "DELETE" })
+          var dev = currentDevices.find(function (d) { return getCardKey(d) === id; });
+          var targetId = dev ? dev.device_id : id;
+          var url = "/admin/api/devices/" + encodeURIComponent(targetId);
+          if (dev && dev.lan_ip) {
+            url += "?lan_ip=" + encodeURIComponent(dev.lan_ip);
+          }
+          return fetch(url, { method: "DELETE" })
             .then(function (r) {
               if (!r.ok) throw new Error("Thất bại tại ID: " + id);
-              return id;
+              return key;
             });
         });
  
         Promise.all(deletePromises)
-          .then(function (deletedIds) {
+          .then(function (deletedKeys) {
             currentDevices = currentDevices.filter(function (d) {
-              return !deletedIds.includes(d.device_id);
+              return !deletedKeys.includes(getCardKey(d));
             });
-            deletedIds.forEach(function (id) { delete countdownStart[id]; });
+            deletedKeys.forEach(function (k) { delete countdownStart[k]; });
             selectedDeviceIds = [];
             renderGrid(currentDevices);
             updateSummary(currentDevices);
@@ -363,7 +377,8 @@
  
   // ─── Render device cards: only administrators can select devices for deletion ──────
   function renderCard(device) {
-    var state = getCountdownState(device.device_id);
+    var cardKey = getCardKey(device);
+    var state = getCountdownState(cardKey);
     var cardOnline = isDeviceOnline(device);
     var cardStatusClass = cardOnline ? "online" : "offline";
     var cardStatusLabel = cardOnline ? "Online" : "Offline";
@@ -374,14 +389,15 @@
     var countdownPrefix  = isStable ? "" : state.label;
  
     var url = detailUrl(device);
-    var isSelected = selectedDeviceIds.includes(device.device_id);
+    var isSelected = selectedDeviceIds.includes(cardKey);
  
     var card = document.createElement("div");
     card.className = "device-card" + (isSelected && isAdmin() ? " selected" : "");
     card.setAttribute("role", "button");
     card.setAttribute("tabindex", "0");
+    card.setAttribute("data-card-key", cardKey);
     card.setAttribute("data-device-id", device.device_id);
-    card.title = isAdmin() ? "Chọn/Bỏ chọn " + device.device_id : device.device_id;
+    card.title = isAdmin() ? ("Chọn/Bỏ chọn " + (device.lan_ip ? (device.device_id + " (" + device.lan_ip + ")") : device.device_id)) : device.device_id;
  
     // Display the checkbox indicator only for administrators
     var checkboxHtml = isAdmin()
@@ -430,9 +446,9 @@
     card.addEventListener("click", function () {
       if (!isAdmin()) return;
       if (isSelected) {
-        selectedDeviceIds = selectedDeviceIds.filter(function (id) { return id !== device.device_id; });
+        selectedDeviceIds = selectedDeviceIds.filter(function (id) { return id !== cardKey; });
       } else {
-        selectedDeviceIds.push(device.device_id);
+        selectedDeviceIds.push(cardKey);
       }
       renderGrid(currentDevices);
       renderActionBar();
@@ -446,7 +462,7 @@
           alert("Chưa có IP LAN của thiết bị. Mở dashboard ESP32 trực tiếp trên mạng local (HTTP).");
           return;
         }
-        openDeviceLoginModal(device.device_id, url);
+        openDeviceLoginModal(device.device_id, url, device.lan_ip);
       });
     }
  
@@ -492,10 +508,10 @@
   }
  
   function tickCountdowns() {
-    var cards = document.querySelectorAll(".device-card[data-device-id]");
+    var cards = document.querySelectorAll(".device-card[data-card-key]");
     cards.forEach(function (card) {
-      var id = card.getAttribute("data-device-id");
-      var state = getCountdownState(id);
+      var cardKey = card.getAttribute("data-card-key");
+      var state = getCountdownState(cardKey);
  
       var lastSeenEl  = card.querySelector(".js-last-seen");
       var countdownEl = card.querySelector(".js-countdown");
@@ -515,7 +531,7 @@
  
       if (pillEl && labelEl) {
         var device = currentDevices.find(function (item) {
-          return item.device_id === id;
+          return getCardKey(item) === cardKey;
         });
         var cardOnline = device ? isDeviceOnline(device) : false;
         pillEl.className = "status-pill " + (cardOnline ? "online" : "offline") + " js-status-pill";
@@ -553,9 +569,11 @@
       .then(function (data) {
         if (!data) return;
         currentDevices = data || [];
+        var fetchedAt = Date.now();
+        currentDevices.forEach(function (d) { d._fetchedAt = fetchedAt; });
  
-        var currentIds = currentDevices.map(function (d) { return d.device_id; });
-        selectedDeviceIds = selectedDeviceIds.filter(function (id) { return currentIds.includes(id); });
+        var currentKeys = currentDevices.map(function (d) { return getCardKey(d); });
+        selectedDeviceIds = selectedDeviceIds.filter(function (id) { return currentKeys.includes(id); });
  
         currentDevices.forEach(function (device) { updateStaleState(device); });
  
@@ -638,18 +656,20 @@
  
   var adminTargetUrl = "";
   var adminTargetId  = "";
+  var loginTargetLanIp = "";
  
   // Open appropriate modal based on role
-  function openDeviceLoginModal(deviceId, url) {
+  function openDeviceLoginModal(deviceId, url, lanIp) {
     if (isAdmin()) {
-      openAdminDeviceModal(deviceId, url);
+      openAdminDeviceModal(deviceId, url, lanIp);
     } else {
-      openUserDeviceModal(deviceId, url);
+      openUserDeviceModal(deviceId, url, lanIp);
     }
   }
  
   // ─── Admin modal ─────────────────────────────
-  function openAdminDeviceModal(deviceId, url) {
+  function openAdminDeviceModal(deviceId, url, lanIp) {
+    loginTargetLanIp = lanIp || "";
     adminTargetId  = deviceId;
     adminTargetUrl = url;
  
@@ -715,7 +735,7 @@
     fetch("/admin/api/devices/" + encodeURIComponent(adminTargetId) + "/password", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: pass })
+      body: JSON.stringify({ password: pass, lan_ip: loginTargetLanIp })
     })
       .then(function (r) {
         adminSavePasswordBtn.disabled = false;
@@ -769,7 +789,8 @@
   });
  
   // ─── User modal (unchanged logic) ────────────
-  function openUserDeviceModal(deviceId, url) {
+  function openUserDeviceModal(deviceId, url, lanIp) {
+    loginTargetLanIp = lanIp || "";
     loginTargetId  = deviceId;
     loginTargetUrl = url;
  
@@ -812,7 +833,7 @@
     loginMsg.textContent    = "Đang xác thực...";
     loginMsg.className      = "login-msg";
  
-    fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/verify", {
+    fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/ticket", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ password: pass })
@@ -827,14 +848,13 @@
           return;
         }
  
-        if (data.ok) {
+        if (data.ok && data.ticket) {
           loginMsg.textContent = "Thành công! Đang chuyển hướng...";
           loginMsg.className   = "login-msg success";
-          setTimeout(function () {
-            var _now = new Date();
-            var _pad = function(n) { return n < 10 ? "0" + n : "" + n; };
-            window.location.href = loginTargetUrl + "?session_start=" + _pad(_now.getHours()) + ":" + _pad(_now.getMinutes()) + ":" + _pad(_now.getSeconds());
-          }, 500);
+          var targetUrl = data.lanIp
+            ? "http://" + data.lanIp + "/?ticket=" + encodeURIComponent(data.ticket)
+            : loginTargetUrl + "?ticket=" + encodeURIComponent(data.ticket);
+          setTimeout(function () { window.location.href = targetUrl; }, 500);
         } else {
           loginMsg.textContent = pass ? "Mật khẩu không đúng." : "Vui lòng nhập mật khẩu.";
           loginMsg.className   = "login-msg error";
@@ -922,11 +942,8 @@
               if (s.status === "approved") {
                 loginMsg.textContent = "Admin đã chấp nhận! Đang chuyển hướng...";
                 loginMsg.className   = "login-msg success";
-                setTimeout(function () {
-                  var _now = new Date();
-                  var _pad = function (n) { return n < 10 ? "0" + n : "" + n; };
-                  window.location.href = loginTargetUrl + "?session_start=" + _pad(_now.getHours()) + ":" + _pad(_now.getMinutes()) + ":" + _pad(_now.getSeconds());
-                }, 500);
+                // Thiết bị không có mật khẩu nên không có ticket — redirect thẳng
+                setTimeout(function () { window.location.href = loginTargetUrl; }, 500);
               } else if (s.status === "denied") {
                 loginMsg.textContent = "Admin đã từ chối yêu cầu truy cập.";
                 loginMsg.className   = "login-msg error";

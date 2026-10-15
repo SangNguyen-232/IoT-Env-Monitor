@@ -185,8 +185,9 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     String payload = "{";
     payload += "\"timestamp_real\":\"" + formatTimestamp(tvReal.tv_sec) + "\",";
     payload += "\"timestamp_up\":\"" + formatTimestamp(tvUp.tv_sec) + "\",";
-    payload += "\"temperature\":\"" + String(temperature, 2) + "\\u00B0C\",";
-    payload += "\"humidity\":\"" + String(humidity, 2) + "%\",";
+    const bool dhtValid = (temperature >= 0.0f && humidity >= 0.0f);   // -1 = cảm biến lỗi
+    payload += "\"temperature\":\"" + (dhtValid ? String(temperature, 2) + "\\u00B0C" : String("--")) + "\",";
+    payload += "\"humidity\":\"" + (dhtValid ? String(humidity, 2) + "%" : String("--")) + "\",";
     char soilBuf[8];
     snprintf(soilBuf, sizeof(soilBuf), "%02d", soilMoisture);
     payload += "\"soil_moisture\":\"" + String(soilBuf) + "%\",";
