@@ -1,0 +1,14 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "iot-env-monitor",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-14",
+  "workers_dev": true,
+  "vpc_services": [
+    {
+      "binding": "IOT_BACKEND",
+      "service_id": "01a13b15-2978-7a33-963b-441c3925539c",
+      "remote": true
+    }
+  ]
+}
