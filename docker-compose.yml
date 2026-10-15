@@ -4,6 +4,7 @@ services:
   postgres:
     container_name: iot_postgres
     image: postgres:16-alpine
+    command: ["postgres", "-c", "timezone=Asia/Ho_Chi_Minh"]
     restart: unless-stopped
     ports:
       # 5433 trên host (chỉ localhost) → 5432 trong container

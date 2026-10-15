@@ -174,12 +174,14 @@ function toNum(v) {
   return Number.isFinite(n) ? n : null;
 }
  
-async function userCanAccessDevice(req, deviceId) {
+async function userCanAccessDevice(req, deviceId, lanIp) {
   const u = req.session.user;
   if (u.role === 'admin') return true;
   const r = await pool.query(
-    'SELECT 1 FROM user_devices WHERE user_id = $1 AND device_id = $2',
-    [u.id, deviceId]
+    `SELECT 1 FROM user_devices
+     WHERE user_id = $1 AND device_id = $2
+       AND ($3::text IS NULL OR lan_ip = '' OR lan_ip = $3)`,
+    [u.id, deviceId, lanIp || null]
   );
   return r.rowCount > 0;
 }
@@ -240,6 +242,20 @@ async function ensureSchema() {
       device_id text    NOT NULL,
       PRIMARY KEY (user_id, device_id)
     )
+  `);
+  await pool.query(`ALTER TABLE user_devices ADD COLUMN IF NOT EXISTS lan_ip text NOT NULL DEFAULT ''`);
+  await pool.query(`
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM pg_index i
+        JOIN pg_attribute a ON a.attrelid = i.indrelid AND a.attnum = ANY(i.indkey)
+        WHERE i.indrelid = 'user_devices'::regclass AND i.indisprimary AND a.attname = 'lan_ip'
+      ) THEN
+        ALTER TABLE user_devices DROP CONSTRAINT IF EXISTS user_devices_pkey;
+        ALTER TABLE user_devices ADD PRIMARY KEY (user_id, device_id, lan_ip);
+      END IF;
+    END $$;
   `);
 }
  
@@ -370,14 +386,17 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
           (s.device_id || CASE WHEN s.lan_ip IS NOT NULL AND s.lan_ip <> '' THEN '_' || s.lan_ip ELSE '' END) AS card_key,
           s.temperature, s.humidity, s.soil_moisture,
           s."PUMP_state", s."MODE_state", s."Message", s."Score",
-          s.timestamp_real AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_real,
-          s.timestamp_up   AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_up,
-          COALESCE(s.received_at, s.timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') AS received_at,
-          EXTRACT(EPOCH FROM (NOW() - COALESCE(s.received_at, s.timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh')))::float8 AS age_seconds
+          s.timestamp_real AS timestamp_real,
+          s.timestamp_up   AS timestamp_up,
+          COALESCE(s.received_at, s.timestamp_up) AS received_at,
+          EXTRACT(EPOCH FROM (NOW() - COALESCE(s.received_at, s.timestamp_up)))::float8 AS age_seconds
         FROM sensor_logs s
         WHERE s.device_id IS NOT NULL
-          AND ($1::boolean OR s.device_id IN (SELECT device_id FROM user_devices WHERE user_id = $2))
-        ORDER BY s.device_id, COALESCE(s.lan_ip, ''), COALESCE(s.received_at, s.timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh') DESC
+          AND ($1::boolean OR EXISTS (
+                SELECT 1 FROM user_devices ud
+                WHERE ud.user_id = $2 AND ud.device_id = s.device_id
+                  AND (ud.lan_ip = '' OR ud.lan_ip = COALESCE(s.lan_ip, ''))))
+        ORDER BY s.device_id, COALESCE(s.lan_ip, ''), COALESCE(s.received_at, s.timestamp_up) DESC
       ) sub
       ORDER BY sub.device_id, sub.received_at DESC
     `, [req.session.user.role === 'admin', req.session.user.id]);
@@ -398,8 +417,8 @@ app.get('/admin/api/devices/:device_id/history', requireLogin, async (req, res) 
     const result = await pool.query(`
       SELECT temperature, humidity, soil_moisture,
              "PUMP_state", "MODE_state", "Message", "Score",
-             timestamp_real AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_real,
-             timestamp_up AT TIME ZONE 'Asia/Ho_Chi_Minh' AS timestamp_up
+             timestamp_real,
+             timestamp_up
       FROM sensor_logs
       WHERE device_id = $1
       ORDER BY timestamp_up DESC
@@ -474,7 +493,15 @@ function makeDeviceTicket(deviceId, lanIp) {
 app.post('/admin/api/devices/:device_id/ticket', requireLogin, rateLimitLogin, async (req, res) => {
   try {
     const { device_id } = req.params;
-    if (!(await userCanAccessDevice(req, device_id))) {
+    let lanIp = req.body && req.body.lan_ip ? String(req.body.lan_ip).trim() : '';
+    if (!lanIp) {
+      const ipRow = await pool.query(
+        'SELECT lan_ip FROM sensor_logs WHERE device_id = $1 AND lan_ip IS NOT NULL ORDER BY received_at DESC LIMIT 1',
+        [device_id]
+      );
+      lanIp = (ipRow.rows[0] && ipRow.rows[0].lan_ip) || '';
+    }
+    if (!(await userCanAccessDevice(req, device_id, lanIp))) {
       return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
     }
     const { password } = req.body;
@@ -495,15 +522,6 @@ app.post('/admin/api/devices/:device_id/ticket', requireLogin, rateLimitLogin, a
         'UPDATE device_credentials SET password = $1 WHERE device_id = $2',
         [await hashPassword(password), device_id]
       );
-    }
-    // Lấy lan_ip gần nhất của thiết bị hoặc từ body nếu có
-    let lanIp = req.body && req.body.lan_ip ? String(req.body.lan_ip).trim() : '';
-    if (!lanIp) {
-      const ipRow = await pool.query(
-        'SELECT lan_ip FROM sensor_logs WHERE device_id = $1 AND lan_ip IS NOT NULL ORDER BY received_at DESC LIMIT 1',
-        [device_id]
-      );
-      lanIp = (ipRow.rows[0] && ipRow.rows[0].lan_ip) || '';
     }
     const { ticket, expiresAt } = makeDeviceTicket(device_id, lanIp);
     res.json({ ok: true, ticket, expiresAt, lanIp });
@@ -533,7 +551,7 @@ app.post('/admin/api/devices/:device_id/access-request', requireLogin, async (re
     if (u.role === 'admin') {
       return res.status(400).json({ error: 'Admin không cần gửi yêu cầu.' });
     }
-    if (!(await userCanAccessDevice(req, device_id))) {
+    if (!(await userCanAccessDevice(req, device_id, sanitizeLanIp((req.body || {}).lan_ip)))) {
       return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
     }
     const has = await pool.query('SELECT 1 FROM device_credentials WHERE device_id = $1', [device_id]);
@@ -675,27 +693,37 @@ app.delete('/admin/api/users/:id', requireLogin, requireAdmin, async (req, res) 
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 app.get('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, res) => {
   try {
     const r = await pool.query(
-      'SELECT device_id FROM user_devices WHERE user_id = $1 ORDER BY device_id',
+      'SELECT device_id, lan_ip FROM user_devices WHERE user_id = $1 ORDER BY device_id, lan_ip',
       [req.params.id]
     );
-    res.json(r.rows.map((x) => x.device_id));
+    res.json(r.rows);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
- 
+
 app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, res) => {
   const userId = parseInt(req.params.id, 10);
   const list = (req.body || {}).devices;
   if (!Number.isInteger(userId) || !Array.isArray(list)) {
     return res.status(400).json({ error: 'Dữ liệu không hợp lệ.' });
   }
-  const ids = [...new Set(list.map((d) => sanitizeDeviceId(d)).filter(Boolean))];
+  const seen = new Set();
+  const ids = [];
+  const ips = [];
+  for (const d of list) {
+    const id = sanitizeDeviceId(d && d.device_id);
+    const ip = sanitizeLanIp(d && d.lan_ip);
+    if (!id || !ip || seen.has(id + '|' + ip)) continue;
+    seen.add(id + '|' + ip);
+    ids.push(id);
+    ips.push(ip);
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -707,8 +735,8 @@ app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
     await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
     if (ids.length) {
       await client.query(
-        'INSERT INTO user_devices (user_id, device_id) SELECT $1, unnest($2::text[])',
-        [userId, ids]
+        'INSERT INTO user_devices (user_id, device_id, lan_ip) SELECT $1, t.d, t.ip FROM unnest($2::text[], $3::text[]) AS t(d, ip)',
+        [userId, ids, ips]
       );
     }
     await client.query('COMMIT');

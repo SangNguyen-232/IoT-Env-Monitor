@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS system_users (
   username   TEXT NOT NULL UNIQUE,
   password   TEXT NOT NULL,
   role       TEXT NOT NULL CHECK (role IN ('admin', 'user')),
-  created_at TIMESTAMP DEFAULT NOW()
+  created_at TIMESTAMPTZ DEFAULT NOW()
 );
  
 CREATE TABLE IF NOT EXISTS user_devices (

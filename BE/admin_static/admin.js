@@ -836,7 +836,7 @@
     fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/ticket", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ password: pass })
+      body: JSON.stringify({ password: pass, lan_ip: loginTargetLanIp })
     })
       .then(function (r) { return r.json(); })
       .then(function (data) {
@@ -920,7 +920,11 @@
     loginMsg.textContent    = "Thiết bị chưa có mật khẩu. Đang gửi yêu cầu đến Admin...";
     loginMsg.className      = "login-msg";
  
-    fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/access-request", { method: "POST" })
+    fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/access-request", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ lan_ip: loginTargetLanIp })
+    })
       .then(function (r) { return r.json().then(function (d) { return { ok: r.ok, data: d }; }); })
       .then(function (res) {
         if (!res.ok) {
@@ -1059,25 +1063,85 @@
       .then(function (r) { if (!r.ok) throw new Error(); return r.json(); })
       .then(function (assigned) {
         if (assignUserSelect.value !== uid) return;
-        var ids = currentDevices.map(function (d) { return d.device_id; });
-        assigned.forEach(function (id) { if (ids.indexOf(id) === -1) ids.push(id); });
+
+        // Gom LAN IP theo MAC: từ card đang có + từ quyền đã cấp
+        var map = {};
+        function addIp(id, ip) {
+          if (!map[id]) map[id] = [];
+          if (ip && map[id].indexOf(ip) === -1) map[id].push(ip);
+        }
+        currentDevices.forEach(function (d) { addIp(d.device_id, d.lan_ip); });
+        assigned.forEach(function (a) { addIp(a.device_id, a.lan_ip); });
+
+        // lan_ip rỗng (quyền cũ) = tất cả IP của MAC đó
+        var checked = {};
+        assigned.forEach(function (a) {
+          if (a.lan_ip) checked[a.device_id + "|" + a.lan_ip] = true;
+          else map[a.device_id].forEach(function (ip) { checked[a.device_id + "|" + ip] = true; });
+        });
+
         assignDeviceList.innerHTML = "";
-        if (ids.length === 0) {
+        var macs = Object.keys(map);
+        if (macs.length === 0) {
           assignDeviceList.innerHTML = '<div class="assign-empty">Chưa có thiết bị nào.</div>';
           return;
         }
-        ids.forEach(function (id) {
-          var row = document.createElement("label");
-          row.className = "assign-device-item";
-          var cb = document.createElement("input");
-          cb.type = "checkbox";
-          cb.value = id;
-          cb.checked = assigned.indexOf(id) !== -1;
-          var span = document.createElement("span");
-          span.textContent = id;
-          row.appendChild(cb);
-          row.appendChild(span);
-          assignDeviceList.appendChild(row);
+
+        macs.forEach(function (mac) {
+          var group = document.createElement("div");
+
+          var head = document.createElement("div");
+          head.className = "assign-mac-head";
+          var arrow = document.createElement("span");
+          arrow.textContent = "▸";
+          var name = document.createElement("span");
+          name.textContent = mac;
+          name.style.flex = "1";
+          var count = document.createElement("span");
+          count.className = "assign-mac-count";
+          head.appendChild(arrow);
+          head.appendChild(name);
+          head.appendChild(count);
+
+          var ipBox = document.createElement("div");
+          ipBox.className = "assign-ip-list";
+          ipBox.style.display = "none";
+
+          function updateCount() {
+            var all = ipBox.querySelectorAll("input[type=checkbox]");
+            var on = ipBox.querySelectorAll("input[type=checkbox]:checked");
+            count.textContent = on.length + "/" + all.length;
+          }
+
+          if (map[mac].length === 0) {
+            ipBox.innerHTML = '<div class="assign-empty">Chưa có LAN IP.</div>';
+          }
+          map[mac].forEach(function (ip) {
+            var row = document.createElement("label");
+            row.className = "assign-device-item";
+            var cb = document.createElement("input");
+            cb.type = "checkbox";
+            cb.value = ip;
+            cb.setAttribute("data-device-id", mac);
+            cb.checked = !!checked[mac + "|" + ip];
+            cb.addEventListener("change", updateCount);
+            var span = document.createElement("span");
+            span.textContent = ip;
+            row.appendChild(cb);
+            row.appendChild(span);
+            ipBox.appendChild(row);
+          });
+
+          head.addEventListener("click", function () {
+            var open = ipBox.style.display === "none";
+            ipBox.style.display = open ? "" : "none";
+            arrow.textContent = open ? "▾" : "▸";
+          });
+
+          updateCount();
+          group.appendChild(head);
+          group.appendChild(ipBox);
+          assignDeviceList.appendChild(group);
         });
       })
       .catch(function () { setAssignMsg("Không tải được danh sách thiết bị.", "error"); });
@@ -1094,7 +1158,7 @@
     if (!uid) return;
     var devices = [];
     assignDeviceList.querySelectorAll("input[type=checkbox]").forEach(function (cb) {
-      if (cb.checked) devices.push(cb.value);
+      if (cb.checked) devices.push({ device_id: cb.getAttribute("data-device-id"), lan_ip: cb.value });
     });
     assignSaveBtn.disabled = true;
     setAssignMsg("Đang lưu...", "");
