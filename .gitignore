@@ -3,14 +3,22 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
-.env
+.env*
+!.env.example
+firmware/include/config/secrets.h
+# Also protect exports created by historical instructions.
 include/secrets.h
 data/wifi_info.json
+local/
+
+# Defer all Markdown commits until the user explicitly confirms project completion.
+# Keep local documentation; remove this rule only when publishing final docs.
+# The pre-commit hook also protects Markdown files already tracked by Git.
+*.[mM][dD]
 
 # Dependencies and Virtual Environments
 .venv/
 node_modules/
-**/node_modules/
 
 # Python cache
 __pycache__/
@@ -23,3 +31,10 @@ Thumbs.db
 # Database upgrade backups (may contain credentials and sensor data)
 backups/
 *.dump
+
+# Project-local build and editor output
+build/
+firmware/data/wifi_list.json
+firmware/data/info.dat
+firmware/data/wifi_info.json
+firmware/data/server.json

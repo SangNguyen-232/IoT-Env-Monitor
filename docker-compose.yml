@@ -15,8 +15,8 @@ services:
       POSTGRES_DB: ${DB_NAME:-iot_db}
     volumes:
       - pgdata18:/var/lib/postgresql
-      - ./DB/DB.sql:/docker-entrypoint-initdb.d/01_schema.sql
-      - ./DB/auth_migration.sql:/docker-entrypoint-initdb.d/02_auth.sql
+      - ./database/schema/base.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./database/migrations/001_auth.sql:/docker-entrypoint-initdb.d/02_auth.sql
     networks:
       - iot_net
     healthcheck:
@@ -34,7 +34,7 @@ services:
   backend:
     container_name: iot_backend
     build:
-      context: ./BE
+      context: ./services/backend
       dockerfile: Dockerfile
     restart: unless-stopped
     # Không publish cổng 3000 ra host/LAN — chỉ cloudflared truy cập nội bộ
@@ -59,7 +59,7 @@ services:
     networks:
       - iot_net
     healthcheck:
-      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/me',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/healthz',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
       interval: 15s
       timeout: 5s
       retries: 5

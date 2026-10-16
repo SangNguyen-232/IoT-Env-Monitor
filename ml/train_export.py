@@ -146,9 +146,9 @@ def main() -> int:
     if args.epochs < 1:
         parser.error("--epochs must be positive")
     root = os.path.abspath(args.output_dir)
-    csv_path    = os.path.join(root, "ml",      "dataset.csv")
-    header_path = os.path.join(root, "include", "dht_anomaly_model.h")
-    tflite_path = os.path.join(root, "ml",      "dht_risk_model.tflite")
+    csv_path    = os.path.join(root, "ml", "data", "dataset.csv")
+    header_path = os.path.join(root, "firmware", "include", "generated", "dht_risk_model.h")
+    tflite_path = os.path.join(root, "ml", "models", "dht_risk_model.tflite")
  
     rng = np.random.default_rng(42)
     xs, ys, ys0 = build_dataset(rng)
@@ -218,6 +218,7 @@ def main() -> int:
     write_csv(csv_path, xs, ys)
     print(f"Wrote {csv_path} ({len(xs)} rows)")
     os.makedirs(os.path.dirname(header_path), exist_ok=True)
+    os.makedirs(os.path.dirname(tflite_path), exist_ok=True)
     with open(tflite_path, "wb") as f:
         f.write(tflite_model)
     print(f"Wrote {tflite_path} ({len(tflite_model)} bytes)")

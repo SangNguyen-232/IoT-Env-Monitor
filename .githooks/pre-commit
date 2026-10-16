@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+"""Keep Markdown changes out of commits while Git's deferral policy is active."""
+from pathlib import Path
+import subprocess
+import sys
+
+
+def main() -> int:
+    staged = subprocess.check_output([
+        'git', 'diff', '--cached', '--name-only', '--no-renames', '-z',
+    ])
+    blocked = []
+    for raw_path in staged.split(b'\0'):
+        if not raw_path:
+            continue
+        path = raw_path.decode(sys.getfilesystemencoding(), errors='surrogateescape')
+        if Path(path).suffix.lower() != '.md':
+            continue
+        result = subprocess.run([
+            'git', 'check-ignore', '--no-index', '--quiet', '--', path,
+        ], check=False)
+        if result.returncode not in (0, 1):
+            return result.returncode
+        if result.returncode == 0:
+            blocked.append(path)
+
+    if blocked:
+        print('Commit blocked: Markdown publication is deferred until project completion.', file=sys.stderr)
+        for path in blocked:
+            print(f'  {path}', file=sys.stderr)
+        print('Unstage these files with git restore --staged -- <path>; keep the local files.', file=sys.stderr)
+        print('Remove the Markdown ignore rule only after the user confirms completion.', file=sys.stderr)
+        return 1
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

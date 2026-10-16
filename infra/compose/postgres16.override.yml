@@ -1,0 +1,12 @@
+# Rollback/legacy startup only. Run with -f docker-compose.yml first.
+# Requires Docker Compose >=2.24.4 for !override.
+services:
+  postgres:
+    image: postgres:16.15-alpine3.24
+    volumes: !override
+      - pgdata:/var/lib/postgresql/data
+      - ./database/schema/base.sql:/docker-entrypoint-initdb.d/01_schema.sql
+      - ./database/migrations/001_auth.sql:/docker-entrypoint-initdb.d/02_auth.sql
+volumes:
+  pgdata:
+    driver: local

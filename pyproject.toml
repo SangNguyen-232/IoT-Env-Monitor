@@ -2,6 +2,6 @@
 # ml/train_export.py uses numpy/tensorflow from ml/requirements.txt.
 # TensorFlow has no usable stdlib-style stubs → reportMissingModuleSource off.
 # If Pylance still complains, set Python interpreter to the same env as: pip install -r ml/requirements.txt
-exclude = [".pio", "lib"]
+exclude = [".pio", ".venv", "local", "firmware/lib", "services/*/node_modules"]
 reportMissingImports = "none"
 reportMissingModuleSource = "none"
