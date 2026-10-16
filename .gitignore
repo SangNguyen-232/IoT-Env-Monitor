@@ -19,3 +19,7 @@ __pycache__/
 # OS metadata
 .DS_Store
 Thumbs.db
+
+# Database upgrade backups (may contain credentials and sensor data)
+backups/
+*.dump

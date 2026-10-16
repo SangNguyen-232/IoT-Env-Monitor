@@ -2,6 +2,8 @@
 
 A real-time IoT environmental monitoring system running on the **ESP32-S3 (Yolo Uno)** microcontroller. The system integrates multi-sensor data acquisition, multi-channel hardware alerting, automatic pump control, on-device TinyML inference, an embedded web server, and a Node.js/PostgreSQL backend with an Admin Dashboard for managing multiple devices.
 
+> **Upgrade (2026-10-16):** See [UPGRADE.md](UPGRADE.md) for current versions, validation commands, and the required PostgreSQL 16 → 18 backup/restore procedure before restarting an existing installation.
+
 ---
 
 ## Table of Contents
@@ -446,8 +448,8 @@ Located in the `BE/` directory, running on **port 3000**.
 
 ```bash
 cd BE
-npm install
-node index.js
+npm ci
+npm start
 ```
 
 ### API Endpoints
@@ -491,8 +493,8 @@ node index.js
 | Column             | Type               | Description                                                                     |
 | ------------------ | ------------------ | ------------------------------------------------------------------------------- |
 | `id`             | INTEGER (identity) | Auto-incrementing primary key                                                   |
-| `timestamp_real` | timestamp          | Sensor measurement time (from NTP), NULL if not synchronized                    |
-| `timestamp_up`   | timestamp NOT NULL | Time recorded by`gettimeofday()` immediately before sending the HTTP POST     |
+| `timestamp_real` | timestamptz          | Sensor measurement time (from NTP), NULL if not synchronized                    |
+| `timestamp_up`   | timestamptz NOT NULL | Time recorded by`gettimeofday()` immediately before sending the HTTP POST     |
 | `temperature`    | text               | Example:`"25.30°C"`                                                          |
 | `humidity`       | text               | Example:`"65.20%"`                                                            |
 | `soil_moisture`  | text               | Example:`"35%"` (formatted as `%02d%%`)                                     |
@@ -513,6 +515,22 @@ node index.js
 ```bash
 psql -U postgres -f DB/DB.sql
 psql -U postgres -d iot_db -f DB/auth_migration.sql
+```
+
+For an existing Docker volume, apply `DB/timezone_migration.sql` once with the
+backend stopped. If it still uses PostgreSQL 16, complete the backup/restore in
+[UPGRADE.md](UPGRADE.md) before using the Compose commands below. It interprets legacy sensor timestamps as `Asia/Ho_Chi_Minh`
+and legacy `system_users.created_at` as UTC (the previous database session
+timezone). Verify that assumption before migrating another installation.
+The Compose PostgreSQL command sets `Asia/Ho_Chi_Minh` for future writes,
+including ESP32 timestamps sent without an explicit offset.
+
+```bash
+docker compose stop backend
+docker compose up -d postgres
+docker compose exec -T postgres sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < DB/timezone_migration.sql
+# Only after the migration succeeds:
+docker compose up -d --build backend
 ```
 
 **DB write debounce mechanism** (in `task_database.cpp`):
@@ -596,7 +614,9 @@ Served at `http://<server>:3000/admin`. Source code in `BE/admin_static/`.
 The script `ml/train_export.py` executes the full pipeline:
 
 ```bash
-pip install -r ml/requirements.txt
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r ml/requirements.txt
 python ml/train_export.py
 ```
 
@@ -684,7 +704,9 @@ pio device monitor
 ### 2. Retraining the TinyML Model (optional)
 
 ```bash
-pip install -r ml/requirements.txt
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r ml/requirements.txt
 python ml/train_export.py
 # Then rebuild and re-flash the firmware to embed the new model
 pio run --target upload
@@ -692,7 +714,7 @@ pio run --target upload
 
 ### 3. Node.js Backend
 
-**Requirements:** Node.js ≥ 16, PostgreSQL running.
+**Requirements:** Node.js 26.12.x, npm 12.2.x, PostgreSQL 18.6 (existing PostgreSQL 16 installations must follow [UPGRADE.md](UPGRADE.md)).
 
 ```bash
 cp .env.example .env
@@ -704,8 +726,8 @@ psql -U postgres -d iot_db -f DB/auth_migration.sql
 
 # Install dependencies and start
 cd BE
-npm install
-node index.js
+npm ci
+npm start
 # Server running at http://localhost:3000
 ```
 
@@ -749,22 +771,22 @@ node index.js
 
 **Firmware (PlatformIO — `platformio.ini`):**
 
-- `ESPAsyncWebServer` (from GitHub: `me-no-dev/ESPAsyncWebServer`) — asynchronous web server
+- `ESPAsyncWebServer` (`ESP32Async/ESPAsyncWebServer@3.12.1`) — asynchronous web server
 - `TensorFlowLite_ESP32` (`tanakamasayuki/TensorFlowLite_ESP32@1.0.0`) — TensorFlow Lite Micro
-- `Adafruit NeoPixel` (`adafruit/Adafruit NeoPixel@^1.15.1`) — WS2812B LED control
-- `DHT20` — temperature/humidity sensor driver
+- `Adafruit NeoPixel` (`adafruit/Adafruit NeoPixel@1.15.5`) — WS2812B LED control
+- `DHT20@0.3.3` — temperature/humidity sensor driver
 - `LiquidCrystal_I2C` — I2C LCD display driver
-- `ArduinoJson` — JSON read/write (LittleFS, WebSocket)
-- `ElegantOTA` — over-the-air firmware updates via browser
+- `ArduinoJson@7.4.3` — JSON read/write (LittleFS, WebSocket)
+- `ElegantOTA@4.0.0` — over-the-air firmware updates via browser
 
 **Backend (`BE/package.json`):**
 
-- `express@^5.2.1` — REST framework
+- `express@^5.3.0` — REST framework
 - `express-session@^1.19.0` — session management
-- `pg@^8.22.0` — PostgreSQL client
+- `pg@^8.23.1` — PostgreSQL client
 - `bcryptjs` — password hashing
 
 **Frontend (CDN):**
 
-- `Chart.js` — historical sensor line chart
-- `Leaflet` + OpenStreetMap — location map
+- `Chart.js@4.5.1` — historical sensor line chart
+- `Leaflet@1.9.4` + OpenStreetMap — location map

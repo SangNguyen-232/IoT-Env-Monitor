@@ -2,7 +2,7 @@
  
 void handleWebSocketMessage(String message)
 {
-    StaticJsonDocument<256> doc;
+    JsonDocument doc;
  
     DeserializationError error = deserializeJson(doc, message);
     if (error)
@@ -12,7 +12,7 @@ void handleWebSocketMessage(String message)
     JsonObject value = doc["value"];
     if (doc["page"] == "device")
     {
-        if (!value.containsKey("gpio") || !value.containsKey("status"))
+        if (value["gpio"].isNull() || value["status"].isNull())
         {
             return;
         }

@@ -1,6 +1,6 @@
 """
 Installation requirements:
-pip install esptool littlefs-python
+python -m pip install -r scripts/requirements.txt
  
 Usage:
  

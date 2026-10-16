@@ -6,15 +6,22 @@
 		"deploy": "wrangler deploy",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
-		"test": "vitest"
+		"test": "vitest run",
+		"test:watch": "vitest",
+		"check": "wrangler deploy --dry-run"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-plugin": "^1.4.3",
 		"vitest": "~5.0.5",
-		"wrangler": "^4"
+		"wrangler": "^4.151.0"
 	},
 	"allowScripts": {
 		"esbuild@0.28.2": true,
 		"workerd@1.20261012.1": true
-	}
+	},
+	"engines": {
+		"node": ">=26.12.0 <27",
+		"npm": ">=12.2.0 <13"
+	},
+	"packageManager": "npm@12.2.0"
 }

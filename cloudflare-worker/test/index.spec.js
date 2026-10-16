@@ -74,3 +74,41 @@ describe("IoT-Env-Monitor Cloudflare Worker", () => {
     expectLoginRedirect(response);
   });
 });
+
+it("preserves method, query and body through the runtime binding", async () => {
+  const response = await SELF.fetch(`${BASE_URL}/sensor?device=uno`, {
+    method: "POST",
+    headers: { "content-type": "application/json", "x-forwarded-for": "spoofed" },
+    body: '{"temperature":24}',
+  });
+  expect(response.status).toBe(200);
+  expect(await response.json()).toEqual({
+    url: "http://backend:3000/sensor?device=uno",
+    method: "POST",
+    proto: "https",
+    host: "example.com",
+    forwardedFor: null,
+    body: '{"temperature":24}',
+  });
+});
+
+it("returns 502 when the backend binding fails", async () => {
+  const response = await worker.fetch(new Request(`${BASE_URL}/`), {
+    IOT_BACKEND: { fetch() { throw new Error("test backend unavailable"); } },
+  });
+  expect(response.status).toBe(502);
+  expect(await response.text()).toBe("IoT Backend Unavailable");
+});
+
+it("preserves backend cookies and redirect without following it", async () => {
+  const response = await worker.fetch(new Request(`${BASE_URL}/`), {
+    IOT_BACKEND: { async fetch(request) {
+      expect(request.redirect).toBe("manual");
+      return new Response(null, { status: 302, headers: {
+        location: "/login", "set-cookie": "session=test; HttpOnly; Secure",
+      } });
+    } },
+  });
+  expectLoginRedirect(response);
+  expect(response.headers.get("set-cookie")).toBe("session=test; HttpOnly; Secure");
+});

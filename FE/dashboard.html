@@ -185,7 +185,7 @@
  
   // Nạp Chart.js và Leaflet với timeout 1.5s; nếu ở AP mode không Internet sẽ fallback canvas ngay lập tức
   Promise.all([
-    loadScript('https://cdn.jsdelivr.net/npm/chart.js', 1500),
+    loadScript('https://cdn.jsdelivr.net/npm/chart.js@4.5.1/dist/chart.umd.min.js', 1500),
     loadScript('https://unpkg.com/leaflet@1.9.4/dist/leaflet.js', 1500)
   ]).then(function() {
     var mainScript = document.createElement('script');
