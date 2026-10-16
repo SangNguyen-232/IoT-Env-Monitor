@@ -11,7 +11,7 @@ void Load_info_File()
   File file = LittleFS.open("/info.dat", "r");
   if (!file) return;
  
-  DynamicJsonDocument doc(512);
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, file);
   file.close();
   if (error) return;
@@ -46,7 +46,7 @@ void Save_info_File(String ssid, String pass)
   wifi_ssid = ssid;
   wifi_pass = pass;
  
-  DynamicJsonDocument doc(512);
+  JsonDocument doc;
   doc["WIFI_SSID"] = ssid;
   doc["WIFI_PASS"] = pass;
  
@@ -89,7 +89,7 @@ void Save_sta_ip_File(String ip)
   File file = LittleFS.open("/info.dat", "r");
   if (!file) return;
  
-  DynamicJsonDocument doc(512);
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, file);
   file.close();
   if (error) return;
@@ -104,7 +104,7 @@ void Save_sta_ip_File(String ip)
   }
 }
  
-void Load_wifi_list(DynamicJsonDocument &doc) {
+void Load_wifi_list(JsonDocument &doc) {
     if (!LittleFS.exists("/wifi_list.json")) return;
     File file = LittleFS.open("/wifi_list.json", "r");
     if (!file) return;
@@ -113,7 +113,7 @@ void Load_wifi_list(DynamicJsonDocument &doc) {
 }
  
 bool Lookup_wifi_pass(const String &ssid, String &pass) {
-    DynamicJsonDocument doc(1024);
+    JsonDocument doc;
     Load_wifi_list(doc);
     if (!doc.is<JsonArray>()) return false;
     for (JsonObject item : doc.as<JsonArray>()) {
@@ -126,7 +126,7 @@ bool Lookup_wifi_pass(const String &ssid, String &pass) {
 }
  
 void Save_wifi_to_list(String ssid, String pass) {
-    DynamicJsonDocument doc(1024);
+    JsonDocument doc;
     Load_wifi_list(doc);
  
     if (!doc.is<JsonArray>()) {
@@ -146,15 +146,15 @@ void Save_wifi_to_list(String ssid, String pass) {
     }
  
     // For a new SSID, prepend it to the beginning of the list (newest at the top, oldest at the bottom)
-    DynamicJsonDocument newDoc(1024);
+    JsonDocument newDoc;
     JsonArray newArr = newDoc.to<JsonArray>();
  
-    JsonObject newEntry = newArr.createNestedObject();
+    JsonObject newEntry = newArr.add<JsonObject>();
     newEntry["ssid"] = ssid;
     newEntry["pass"] = pass;
  
     for (JsonObject item : arr) {
-        JsonObject copy = newArr.createNestedObject();
+        JsonObject copy = newArr.add<JsonObject>();
         copy["ssid"] = item["ssid"].as<String>();
         copy["pass"] = item["pass"].as<String>();
     }
@@ -164,7 +164,7 @@ void Save_wifi_to_list(String ssid, String pass) {
 }
  
 bool Load_first_wifi_from_list(String &ssid, String &pass) {
-    DynamicJsonDocument doc(1024);
+    JsonDocument doc;
     Load_wifi_list(doc);
     if (!doc.is<JsonArray>() || doc.as<JsonArray>().size() == 0) return false;
     JsonObject first = doc.as<JsonArray>()[0];
@@ -179,7 +179,7 @@ void Load_server_url()
   if (!LittleFS.exists("/server.json")) return;
   File file = LittleFS.open("/server.json", "r");
   if (!file) return;
-  DynamicJsonDocument doc(512);
+  JsonDocument doc;
   DeserializationError error = deserializeJson(doc, file);
   file.close();
   if (error) return;
@@ -196,7 +196,7 @@ void Save_server_url(const String& url)
   String trimmed = url;
   trimmed.trim();
   g_sensorApiUrl = trimmed;
-  DynamicJsonDocument doc(512);
+  JsonDocument doc;
   doc["url"] = trimmed;
   File file = LittleFS.open("/server.json", "w");
   if (file)
@@ -209,7 +209,7 @@ void Save_server_url(const String& url)
 void Save_info_NoRestart(String ssid, String pass) {
     wifi_ssid = ssid;
     wifi_pass = pass;
-    DynamicJsonDocument doc(512);
+    JsonDocument doc;
     doc["WIFI_SSID"] = ssid;
     doc["WIFI_PASS"] = pass;
     File configFile = LittleFS.open("/info.dat", "w");

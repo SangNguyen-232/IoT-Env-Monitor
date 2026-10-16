@@ -750,4 +750,5 @@ app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
   }
 });
  
-app.listen(3000, () => console.log('API running on port 3000'));
+const port = Number(process.env.PORT || 3000);
+app.listen(port, () => console.log(`API running on port ${port}`));

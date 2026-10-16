@@ -55,7 +55,7 @@ static bool verifyTicket(const String &ticketB64)
     decodedBuf[decodedLen] = '\0';
 
     // Parse JSON đúng chuẩn, không tìm trường bằng thao tác chuỗi thủ công.
-    StaticJsonDocument<512> doc;
+    JsonDocument doc;
     if (deserializeJson(doc, reinterpret_cast<const char *>(decodedBuf.data()), decodedLen)
             != DeserializationError::Ok) return false;
 
@@ -225,7 +225,7 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
             String message;
             message += String((char *)data).substring(0, len);
 
-            DynamicJsonDocument hdr(1024);
+            JsonDocument hdr;
             if (deserializeJson(hdr, message) != DeserializationError::Ok) return;
             String page = hdr["page"] | String("");
             if (page == "auth")
@@ -366,13 +366,13 @@ void connnectWSV()
     server.on("/api/wifi-list", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
-        DynamicJsonDocument src(1024);
+        JsonDocument src;
         Load_wifi_list(src);
-        DynamicJsonDocument outDoc(1024);
+        JsonDocument outDoc;
         JsonArray arr = outDoc.to<JsonArray>();
         if (src.is<JsonArray>()) {
             for (JsonObject item : src.as<JsonArray>()) {
-                JsonObject o = arr.createNestedObject();
+                JsonObject o = arr.add<JsonObject>();
                 o["ssid"] = item["ssid"];
             }
         }
@@ -384,7 +384,7 @@ void connnectWSV()
     server.on("/api/server-url", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         captureAdminIp(request);
-        DynamicJsonDocument doc(256);
+        JsonDocument doc;
         doc["url"] = g_sensorApiUrl;
         String out;
         serializeJson(doc, out);
@@ -401,7 +401,7 @@ void connnectWSV()
             for (size_t i = 0; i < len; i++) bodyBuf += (char)data[i];
             if (index + len < total) return;
  
-            StaticJsonDocument<512> doc;
+            JsonDocument doc;
             if (deserializeJson(doc, bodyBuf) != DeserializationError::Ok) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
                 return;
@@ -428,7 +428,7 @@ void connnectWSV()
             for (size_t i = 0; i < len; i++) bodyBuf += (char)data[i];
             if (index + len < total) return;
  
-            StaticJsonDocument<256> doc;
+            JsonDocument doc;
             if (deserializeJson(doc, bodyBuf) != DeserializationError::Ok) {
                 request->send(400, "application/json", "{\"error\":\"invalid json\"}");
                 return;

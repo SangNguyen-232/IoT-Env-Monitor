@@ -1,5 +1,6 @@
 from __future__ import annotations
  
+import argparse
 import csv
 import os
 import sys
@@ -89,7 +90,7 @@ def write_csv(path: str, xs: np.ndarray, ys: np.ndarray) -> None:
  
  
 def tflite_to_header(tflite_bytes: bytes, out_path: str) -> None:
-    lines = ["#pragma once", "", "const unsigned char dht_anomaly_model_tflite[] = {"]
+    lines = ["#pragma once", "", "alignas(16) const unsigned char dht_anomaly_model_tflite[] = {"]
     row: list[str] = []
     for b in tflite_bytes:
         row.append(f"0x{b:02x}")
@@ -104,16 +105,53 @@ def tflite_to_header(tflite_bytes: bytes, out_path: str) -> None:
         f.write("\n".join(lines))
  
  
+def validate_tflite_model(tf, model, tflite_model: bytes, samples: np.ndarray) -> None:
+    # TensorFlowLite_ESP32 1.0.0 supports these float32 v1 operators.
+    # Reject newer converter output before replacing a working firmware model.
+    from tensorflow.lite.python import schema_py_generated as schema
+
+    flat_model = schema.Model.GetRootAsModel(tflite_model, 0)
+    if flat_model.Version() != 3:
+        raise ValueError("Unsupported TFLite model schema")
+    allowed = {schema.BuiltinOperator.FULLY_CONNECTED, schema.BuiltinOperator.SOFTMAX}
+    for i in range(flat_model.OperatorCodesLength()):
+        op = flat_model.OperatorCodes(i)
+        if op.BuiltinCode() not in allowed or op.Version() != 1:
+            raise ValueError(f"Unsupported TinyML operator: {op.BuiltinCode()} v{op.Version()}")
+
+    interpreter = tf.lite.Interpreter(model_content=tflite_model)
+    interpreter.allocate_tensors()
+    input_info = interpreter.get_input_details()[0]
+    output_info = interpreter.get_output_details()[0]
+    if (tuple(input_info["shape"]) != (1, 3)
+            or tuple(output_info["shape"]) != (1, 3)
+            or input_info["dtype"] != np.float32
+            or output_info["dtype"] != np.float32):
+        raise ValueError("TinyML requires float32 input/output with shape (1, 3)")
+    expected = model(samples, training=False).numpy()
+    for sample, prediction in zip(samples, expected):
+        interpreter.set_tensor(input_info["index"], sample.reshape(1, 3))
+        interpreter.invoke()
+        actual = interpreter.get_tensor(output_info["index"])[0]
+        np.testing.assert_allclose(actual, prediction, rtol=1e-4, atol=1e-5)
+    print(f"Validated TFLite operators and {len(samples)} predictions")
+
+
 def main() -> int:
-    root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    parser = argparse.ArgumentParser(description="Train and validate the ESP32 TinyML model")
+    parser.add_argument("--output-dir", default=os.path.join(os.path.dirname(__file__), ".."),
+                        help="Project root for generated ml/ and include/ files")
+    parser.add_argument("--epochs", type=int, default=80)
+    args = parser.parse_args()
+    if args.epochs < 1:
+        parser.error("--epochs must be positive")
+    root = os.path.abspath(args.output_dir)
     csv_path    = os.path.join(root, "ml",      "dataset.csv")
     header_path = os.path.join(root, "include", "dht_anomaly_model.h")
     tflite_path = os.path.join(root, "ml",      "dht_risk_model.tflite")
  
     rng = np.random.default_rng(42)
     xs, ys, ys0 = build_dataset(rng)
-    write_csv(csv_path, xs, ys)
-    print(f"Wrote {csv_path} ({len(xs)} rows)")
  
     try:
         os.environ.setdefault("TF_CPP_MIN_LOG_LEVEL", "2")
@@ -124,6 +162,7 @@ def main() -> int:
         print("TensorFlow not installed. Run: pip install -r ml/requirements.txt", file=sys.stderr)
         return 1
  
+    tf.keras.utils.set_random_seed(42)
     n = len(xs)
     idx = rng.permutation(n)
     split = int(n * 0.85)
@@ -156,7 +195,7 @@ def main() -> int:
     model.fit(
         xs[tr], ys0[tr],
         validation_data=(xs[va], ys0[va]),
-        epochs=80,
+        epochs=args.epochs,
         batch_size=64,
         verbose=1,
         callbacks=[early],
@@ -170,9 +209,15 @@ def main() -> int:
  
     converter = tf.lite.TFLiteConverter.from_keras_model(model)
     converter.optimizations = []
+    converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS]
     with open(os.devnull, "w") as f, contextlib.redirect_stdout(f):
         tflite_model = converter.convert()
  
+    validate_tflite_model(tf, model, tflite_model, xs[va[:32]])
+
+    write_csv(csv_path, xs, ys)
+    print(f"Wrote {csv_path} ({len(xs)} rows)")
+    os.makedirs(os.path.dirname(header_path), exist_ok=True)
     with open(tflite_path, "wb") as f:
         f.write(tflite_model)
     print(f"Wrote {tflite_path} ({len(tflite_model)} bytes)")
