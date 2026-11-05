@@ -11,9 +11,9 @@
 #define PUMP_SOIL_OFF 32
 #define PUMP_MAX_RUN_MS 60000UL
 #define PUMP_COOLDOWN_MS 120000UL
-#define PUMP_MANUAL_MAX_RUN_MS  300000UL  // MANUAL ON tối đa 5 phút
-#define PUMP_FAULT_MAX_TIMEOUTS 3         // số lần tưới không hiệu quả liên tiếp thì khóa AUTO
-#define PUMP_MIN_RISE           3         // soil phải tăng tối thiểu (%) sau một lượt tưới
+#define PUMP_MANUAL_MAX_RUN_MS  300000UL  // Limit MANUAL ON time to 5 minutes.
+#define PUMP_FAULT_MAX_TIMEOUTS 3         // Lock AUTO after this many consecutive ineffective timed-out runs.
+#define PUMP_MIN_RISE           3         // Minimum soil-moisture increase, in percentage points, after a run.
 
 bool pump_manual_control = false;
 bool pump_manual_state = false;
@@ -79,7 +79,7 @@ void task_pump(void *pvParameters)
             if (!new_state) {
                 pump_on_since = 0;
             }
-            // Tự tắt sau PUMP_MANUAL_MAX_RUN_MS
+            // Automatically turn off after PUMP_MANUAL_MAX_RUN_MS.
             if (new_state && (now - pump_on_since) >= PUMP_MANUAL_MAX_RUN_MS) {
                 // Physical shutoff must not depend on acquiring the reporting mutex.
                 new_state = false;
@@ -99,7 +99,7 @@ void task_pump(void *pvParameters)
         } else {
             if (auto_fault) {
                 auto_pump_on = false;
-                if (current_soil >= PUMP_SOIL_OFF) {      // đất đã phục hồi -> mở khóa
+                if (current_soil >= PUMP_SOIL_OFF) {      // Clear the fault once soil moisture has recovered.
                     auto_fault = false;
                     auto_timeouts = 0;
                 }

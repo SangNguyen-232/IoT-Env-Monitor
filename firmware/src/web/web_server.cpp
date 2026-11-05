@@ -27,23 +27,23 @@ static bool isAPMode()
     return (WiFi.getMode() == WIFI_AP) || (WiFi.getMode() == WIFI_AP_STA && WiFi.status() != WL_CONNECTED);
 }
  
-// Verify HMAC-SHA256 ticket do backend cấp (mục 3B).
-// ticket là base64url(JSON{payload,sig}).
+// Verify an HMAC-SHA256 ticket issued by the backend.
+// The ticket is a Base64URL-encoded JSON object containing payload and sig.
 // payload = "<device_id>:<lan_ip>:<expiresAt_ms>"
 // sig = HMAC-SHA256(SENSOR_API_KEY, payload) hex
 static bool verifyTicket(const String &ticketB64, long long *validUntilMs = nullptr)
 {
-    // Giới hạn kích thước đầu vào để tránh cấp phát bộ nhớ quá lớn trên ESP32.
+    // Bound the input size to prevent excessive memory allocation on ESP32.
     if (ticketB64.isEmpty() || ticketB64.length() > 1400) return false;
 
-    // Chuyển Base64URL sang Base64 chuẩn.
+    // Convert Base64URL to standard Base64.
     String b64 = ticketB64;
     b64.replace('-', '+');
     b64.replace('_', '/');
     if (b64.length() % 4 == 1) return false;
     while (b64.length() % 4 != 0) b64 += '=';
 
-    // Dùng API Mbed TLS đi kèm framework ESP32 (không dùng base64::decode).
+    // Use the Mbed TLS API bundled with the ESP32 framework instead of base64::decode.
     std::vector<unsigned char> decodedBuf((b64.length() * 3) / 4 + 1);
     size_t decodedLen = 0;
     int ret = mbedtls_base64_decode(
@@ -56,7 +56,7 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
     if (ret != 0 || decodedLen == 0) return false;
     decodedBuf[decodedLen] = '\0';
 
-    // Parse JSON đúng chuẩn, không tìm trường bằng thao tác chuỗi thủ công.
+    // Parse JSON with the JSON library rather than extracting fields with string operations.
     JsonDocument doc;
     if (deserializeJson(doc, reinterpret_cast<const char *>(decodedBuf.data()), decodedLen)
             != DeserializationError::Ok) return false;
@@ -79,14 +79,14 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
     if (errno == ERANGE || endPtr == expiresText.c_str() ||
         endPtr == nullptr || *endPtr != '\0' || expiresAtMs <= 0) return false;
 
-    // Từ chối khi chưa đồng bộ thời gian: nếu không có giờ tin cậy,
-    // ESP32 không thể kiểm tra ticket đã hết hạn hay chưa.
+    // Reject tickets before time synchronization; without a trusted clock,
+    // ESP32 cannot determine whether a ticket has expired.
     const time_t nowSec = time(nullptr);
     if (nowSec < static_cast<time_t>(1577836800)) return false; // 2020-01-01 UTC
     const long long nowMs = static_cast<long long>(nowSec) * 1000LL;
     if (nowMs >= expiresAtMs) return false;
 
-    // Kiểm tra HMAC-SHA256 với khóa chia sẻ giữa ESP32 và backend.
+    // Verify HMAC-SHA256 using the key shared by ESP32 and the backend.
     const char *key = SENSOR_API_KEY;
     if (key == nullptr || key[0] == '\0') return false;
 
@@ -115,7 +115,7 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
     }
     expected[64] = '\0';
 
-    // Chỉ chấp nhận chữ ký đúng 64 ký tự hex; so sánh không dừng sớm.
+    // Accept only 64-character hexadecimal signatures and compare without early exit.
     uint8_t diff = 0;
     for (int i = 0; i < 64; ++i) {
         diff |= static_cast<uint8_t>(expected[i] ^ sigHex[i]);
@@ -128,8 +128,8 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
 static bool requireDeviceAuth(AsyncWebServerRequest *request, uint32_t *maxWsSessionMs = nullptr)
 {
     if (maxWsSessionMs != nullptr) *maxWsSessionMs = 300000U;
-    // Ở chế độ AP Mode: mạng đã có mật khẩu Wi-Fi AP (WPA2).
-    // Bỏ qua Basic Auth để Apple Captive Assistant trên iPhone không bị chặn màn hình trắng.
+    // In AP mode, the Wi-Fi network is protected by the AP password (WPA2).
+    // Skip Basic Auth so Apple Captive Assistant on iPhone can display the setup page.
     if (isAPMode()) return true;
 
     if (request->hasHeader("Cookie")) {
@@ -480,7 +480,7 @@ void connnectWSV()
     wifiSwitchHandler->setMaxContentLength(1024);
     server.addHandler(wifiSwitchHandler);
 
-    // Captive Portal Redirect Endpoints cho iOS, Android, Windows
+    // Captive portal redirect endpoints for iOS, Android, and Windows.
     auto captiveRedirect = [](AsyncWebServerRequest *request) {
         request->redirect("http://192.168.4.1/");
     };

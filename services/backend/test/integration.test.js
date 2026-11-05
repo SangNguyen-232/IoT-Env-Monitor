@@ -30,6 +30,10 @@ test('backend on an isolated PostgreSQL database', { skip: !testUrl, timeout: 30
   for (const filename of ['schema/base.sql', 'migrations/001_auth.sql']) {
     await db.query(await readFile(path.join(__dirname, '../../../database', filename), 'utf8'));
   }
+  // Simulate upgrading a database with an existing session, without inventing
+  // a login time for that session during backend startup.
+  await db.query(`CREATE TABLE "session" (sid varchar PRIMARY KEY, sess json NOT NULL, expire timestamp(6) NOT NULL);
+    INSERT INTO "session" VALUES ('legacy-session', '{}', NOW() + INTERVAL '1 hour')`);
   const socket = net.createServer();
   await new Promise(resolve => socket.listen(0, '127.0.0.1', resolve));
   const port = socket.address().port;
@@ -87,6 +91,8 @@ test('backend on an isolated PostgreSQL database', { skip: !testUrl, timeout: 30
     assert.deepEqual(rows, [{ temperature: 24, humidity: 65 }]);
   });
   await t.test('bcrypt login, PostgreSQL sessions, dashboard and logout', async () => {
+    assert.equal((await db.query("SELECT login_at FROM session WHERE sid = 'legacy-session'")).rows[0].login_at, null);
+    const beforeLogin = Date.now();
     const login = await request('/login', { method: 'POST', headers: {
       'content-type': 'application/x-www-form-urlencoded',
     }, body: 'username=test-admin&password=test-password' });
@@ -94,13 +100,31 @@ test('backend on an isolated PostgreSQL database', { skip: !testUrl, timeout: 30
     assert.equal((await login.json()).ok, true);
     const cookie = login.headers.get('set-cookie').split(';')[0];
     const headers = { cookie };
+    const sid = decodeURIComponent(cookie.slice(cookie.indexOf('=') + 1)).slice(2).split('.')[0];
+    const getSession = async () => (await db.query('SELECT login_at, EXTRACT(EPOCH FROM (expire - localtimestamp))::float8 AS remaining_seconds FROM session WHERE sid = $1', [sid])).rows[0];
+    const initialSession = await getSession();
+    assert(initialSession.login_at.getTime() >= beforeLogin);
+    assert(initialSession.login_at.getTime() <= Date.now());
+    // Force a meaningful expiry change on the next authenticated request.
+    await db.query("UPDATE session SET expire = NOW() + INTERVAL '1 hour' WHERE sid = $1", [sid]);
     assert.deepEqual(await (await request('/api/me', { headers })).json(), {
       loggedIn: true, username: 'test-admin', role: 'admin',
     });
     assert.equal((await request('/admin/admin.html', { headers })).status, 200);
     const devices = await (await request('/admin/api/devices', { headers })).json();
     assert(devices.some(d => d.device_id === 'test-uno'));
+    const renewedSession = await getSession();
+    assert.equal(renewedSession.login_at.getTime(), initialSession.login_at.getTime());
+    assert(renewedSession.remaining_seconds > 7 * 60 * 60);
+    // A subsequent login replaces the session and receives its own login time.
+    const nextLoginStart = Date.now();
+    const nextHeaders = await loginAs('test-admin', 'test-password');
+    assert.notEqual(nextHeaders.cookie, cookie);
+    const newestSession = (await db.query("SELECT login_at FROM session WHERE sid <> $1 AND sid <> 'legacy-session' ORDER BY login_at DESC LIMIT 1", [sid])).rows[0];
+    assert(newestSession.login_at.getTime() >= nextLoginStart);
+    await request('/logout', { method: 'POST', headers: nextHeaders });
     assert.equal((await request('/logout', { method: 'POST', headers })).status, 200);
+    assert.equal(await getSession(), undefined);
     assert.deepEqual(await (await request('/api/me', { headers })).json(), { loggedIn: false });
   });
   await t.test('rejects invalid telemetry without inserting partial or coerced data', async () => {
@@ -200,6 +224,83 @@ test('backend on an isolated PostgreSQL database', { skip: !testUrl, timeout: 30
   });
   await t.test('reports database readiness', async () => {
     assert.equal((await request('/healthz')).status, 200);
+  });
+  await t.test('session login-time migration preserves existing timestamps on repeated runs', async () => {
+    const migration = await readFile(path.join(__dirname, '../../../database/migrations/003_session_login_at.sql'), 'utf8');
+    const before = (await db.query('SELECT sid, login_at FROM session ORDER BY sid')).rows;
+    await db.query(migration);
+    await db.query(migration);
+    assert.deepEqual((await db.query('SELECT sid, login_at FROM session ORDER BY sid')).rows, before);
+    const column = (await db.query("SELECT data_type FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'session' AND column_name = 'login_at'")).rows[0];
+    assert.equal(column.data_type, 'timestamp with time zone');
+  });
+  await t.test('display views format all timestamps in Vietnam time without changing latency or stored precision', async () => {
+    const tables = ['device_credentials', 'sensor_logs', 'session', 'system_users', 'user_devices'];
+    const snapshot = async () => {
+      const result = {};
+      for (const table of tables) {
+        result[table] = (await db.query(`SELECT row_to_json(t)::text AS row FROM public.${table} t ORDER BY row_to_json(t)::text`)).rows;
+      }
+      return result;
+    };
+    const before = await snapshot();
+    const migration = await readFile(path.join(__dirname, '../../../database/migrations/004_time_display_views.sql'), 'utf8');
+    await db.query(migration);
+    await db.query(migration);
+    assert.deepEqual(await snapshot(), before);
+    const views = (await db.query("SELECT table_name, is_updatable FROM information_schema.views WHERE table_schema = 'display' ORDER BY table_name")).rows;
+    assert.deepEqual(views, tables.map(table_name => ({ table_name, is_updatable: 'NO' })));
+    for (const table of tables) {
+      assert.equal((await db.query(`SELECT count(*)::int AS n FROM display.${table}`)).rows[0].n,
+        (await db.query(`SELECT count(*)::int AS n FROM public.${table}`)).rows[0].n);
+    }
+
+    const client = await db.connect();
+    try {
+      await client.query('BEGIN');
+      const fixture = (await client.query(`INSERT INTO sensor_logs
+        (device_id, timestamp_real, timestamp_up, received_at, latency)
+        VALUES ('time-display-test', '2026-10-17 12:21:13.123456+00',
+          '2026-10-17 12:21:13.246912+00', '2026-10-17 12:21:13.987654+00', 123456)
+        RETURNING id`)).rows[0];
+      await client.query(`INSERT INTO session (sid, sess, expire, login_at) VALUES
+        ('time-display-test', '{"cookie":{"expires":"2026-10-17T13:21:13.456Z","originalMaxAge":28800000}}',
+         '2026-10-17 20:21:13.456', '2026-10-17 12:21:13.123456+00')`);
+      await client.query("UPDATE system_users SET created_at = '2026-10-17 12:21:13.999999+00' WHERE username = 'test-admin'");
+      for (const zone of ['UTC', 'Asia/Ho_Chi_Minh', 'America/New_York']) {
+        await client.query("SELECT set_config('TimeZone', $1, true)", [zone]);
+        assert.deepEqual((await client.query(`SELECT timestamp_real, timestamp_up, received_at, latency,
+          pg_typeof(latency)::text AS latency_type FROM display.sensor_logs WHERE id = $1`, [fixture.id])).rows[0], {
+          timestamp_real: '2026-10-17 19:21:13', timestamp_up: '2026-10-17 19:21:13',
+          received_at: '2026-10-17 19:21:13', latency: 123456, latency_type: 'integer',
+        });
+        const session = (await client.query("SELECT * FROM display.session WHERE sid = 'time-display-test'")).rows[0];
+        assert.equal(session.login_at, '2026-10-17 19:21:13');
+        assert.equal(session.expire, '2026-10-17 20:21:13');
+        assert.equal(session.sess.cookie.expires, '2026-10-17 20:21:13');
+        assert.equal(session.sess.cookie.originalMaxAge, 28800000);
+        assert.equal((await client.query("SELECT login_at FROM display.session WHERE sid = 'legacy-session'")).rows[0].login_at, null);
+        assert.equal((await client.query("SELECT created_at FROM display.system_users WHERE username = 'test-admin'")).rows[0].created_at,
+          '2026-10-17 19:21:13');
+      }
+      // Verify the stored fractional seconds and the firmware's exact duration survive.
+      const raw = (await client.query(`SELECT
+        to_char(timestamp_real AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS.US') AS measured_at,
+        (extract(epoch FROM (timestamp_up - timestamp_real)) * 1000000)::int AS elapsed_us,
+        latency FROM public.sensor_logs WHERE id = $1`, [fixture.id])).rows[0];
+      assert.deepEqual(raw, { measured_at: '2026-10-17 12:21:13.123456', elapsed_us: 123456, latency: 123456 });
+      assert.equal((await client.query("SELECT sess #>> '{cookie,expires}' AS expires FROM public.session WHERE sid = 'time-display-test'")).rows[0].expires,
+        '2026-10-17T13:21:13.456Z');
+      await client.query('UPDATE sensor_logs SET timestamp_real = NULL, latency = NULL WHERE id = $1', [fixture.id]);
+      assert.deepEqual((await client.query('SELECT timestamp_real, latency FROM display.sensor_logs WHERE id = $1', [fixture.id])).rows[0],
+        { timestamp_real: null, latency: null });
+    } finally {
+      await client.query('ROLLBACK');
+      client.release();
+    }
+    const headers = await loginAs('test-admin', 'test-password');
+    assert.equal((await request('/admin/api/devices', { headers })).status, 200);
+    assert.equal((await request('/logout', { method: 'POST', headers })).status, 200);
   });
   await t.test('timezone migration preserves instants on fresh schemas and repeated runs', async () => {
     const migration = await readFile(path.join(__dirname, '../../../database/migrations/002_timezone.sql'), 'utf8');

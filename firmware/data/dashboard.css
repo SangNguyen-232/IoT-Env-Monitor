@@ -500,7 +500,7 @@ html, body {
 .content { min-width: 0; }
 .charts-row > * { min-width: 0; }
  
-/* Tablet ngang: 5 cột quá hẹp */
+/* Reduce the column count on landscape tablets to keep cards wide enough. */
 @media (min-width: 881px) and (max-width: 1100px) {
   .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
@@ -519,7 +519,7 @@ html, body {
   .modal-form input { font-size: 16px; }
 }
  
-/* Phone nhỏ: sidebar chỉ còn icon để không tràn ngang */
+/* Show only sidebar icons on small phones to prevent horizontal overflow. */
 @media (max-width: 480px) {
   .brand-name, .nav-item span { display: none; }
   .nav-item { padding: 10px; }

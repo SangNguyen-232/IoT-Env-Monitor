@@ -7,7 +7,7 @@ services:
     command: ["postgres", "-c", "timezone=Asia/Ho_Chi_Minh"]
     restart: unless-stopped
     ports:
-      # 5433 trên host (chỉ localhost) → 5432 trong container
+      # Host port 5433 (localhost only) maps to container port 5432.
       - "127.0.0.1:5433:5432"
     environment:
       POSTGRES_USER: ${DB_USER:-iot_user}
@@ -37,7 +37,7 @@ services:
       context: ./services/backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Không publish cổng 3000 ra host/LAN — chỉ cloudflared truy cập nội bộ
+    # Keep port 3000 internal to Docker; cloudflared connects over the shared network.
     expose:
       - "3000"
     env_file:

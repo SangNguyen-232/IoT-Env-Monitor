@@ -842,7 +842,7 @@
       .then(function (data) {
         loginSubmitBtn.disabled = false;
  
-        // Device has no password → gửi yêu cầu, chờ Admin duyệt
+        // Request access to the device without a backend password and wait for admin approval.
         if (data.reason === "no_password") {
           startAccessRequest();
           return;
@@ -908,7 +908,7 @@
       });
   });
  
-  // ─── Access request: phía User (chờ duyệt) ──────────
+  // --- Access requests: user submits a request and waits for approval. ---
   var accessPollTimer = null;
  
   function stopAccessPoll() {
@@ -970,7 +970,7 @@
       });
   }
  
-  // ─── Access request: phía Admin (duyệt) ──────────
+  // --- Access requests: admin approves or denies pending requests. ---
   function renderAccessRequests(list) {
     var bar = document.getElementById("accessRequestBar");
     if (!bar) {
@@ -1068,7 +1068,7 @@
       .then(function (assigned) {
         if (assignUserSelect.value !== uid) return;
 
-        // Gom LAN IP theo MAC: từ card đang có + từ quyền đã cấp
+        // Group LAN IP addresses by MAC using current device cards and existing grants.
         var map = {};
         function addIp(id, ip) {
           if (!map[id]) map[id] = [];
@@ -1077,7 +1077,7 @@
         currentDevices.forEach(function (d) { addIp(d.device_id, d.lan_ip); });
         assigned.forEach(function (a) { addIp(a.device_id, a.lan_ip); });
 
-        // lan_ip rỗng (quyền cũ) = tất cả IP của MAC đó
+        // An empty lan_ip in a legacy grant allows every IP address for that MAC.
         var checked = {};
         assigned.forEach(function (a) {
           if (a.lan_ip) checked[a.device_id + "|" + a.lan_ip] = true;

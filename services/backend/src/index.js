@@ -47,7 +47,7 @@ const tp = process.env.TRUST_PROXY;
 if (tp) {
   app.set('trust proxy', tp === 'true' ? true : tp === 'false' ? false : /^\d+$/.test(tp) ? parseInt(tp, 10) : tp);
 }
-// CSP tắt vì admin.html / login.html dùng script/style inline và cần ws:// tới ESP32
+// Disable CSP for inline scripts/styles in admin and login pages and WebSocket access to ESP32 devices.
 app.use(helmet({ contentSecurityPolicy: false }));
 app.use(express.json({ limit: '32kb' }));
 app.use(express.urlencoded({ extended: false, limit: '32kb' }));
@@ -243,6 +243,19 @@ async function purgeOldLogs() {
 }
  
 async function ensureSchema() {
+  // Only successful logins create stored sessions (saveUninitialized is false).
+  // Set the default separately so existing sessions retain an unknown login time.
+  // connect-pg-simple updates sess/expire only, preserving login_at on save/touch.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS "session" (
+      sid varchar PRIMARY KEY,
+      sess json NOT NULL,
+      expire timestamp(6) NOT NULL
+    );
+    ALTER TABLE "session" ADD COLUMN IF NOT EXISTS login_at timestamptz;
+    ALTER TABLE "session" ALTER COLUMN login_at SET DEFAULT CURRENT_TIMESTAMP;
+    CREATE INDEX IF NOT EXISTS "IDX_session_expire" ON "session" (expire);
+  `);
   await pool.query(`ALTER TABLE sensor_logs ADD COLUMN IF NOT EXISTS received_at timestamptz DEFAULT NOW()`);
   await pool.query(`ALTER TABLE sensor_logs ADD COLUMN IF NOT EXISTS lan_ip text`);
   await pool.query(`
@@ -547,8 +560,8 @@ app.post('/admin/api/devices/:device_id/verify', requireLogin, rateLimitLogin, a
   }
 });
 
-// ─── Device ticket: BE ký HMAC, ESP32 verify ─────────────────────────────
-const TICKET_TTL_MS = 5 * 60 * 1000; // 5 phút
+// --- Device tickets: the backend signs HMAC tickets; ESP32 verifies them. ---
+const TICKET_TTL_MS = 5 * 60 * 1000; // 5 minutes
 
 function makeDeviceTicket(deviceId, lanIp) {
   const expiresAt = Date.now() + TICKET_TTL_MS;
@@ -600,7 +613,7 @@ app.post('/admin/api/devices/:device_id/ticket', requireLogin, rateLimitLogin, a
   }
 });
 
-// ─── Access requests (in-memory): User xin vào thiết bị chưa có mật khẩu ───
+// --- In-memory access requests for devices without a backend password ---
 const ACCESS_REQ_PENDING_TTL_MS = 5 * 60 * 1000;
 const ACCESS_REQ_DECIDED_TTL_MS = 2 * 60 * 1000;
 const accessRequests = new Map();
