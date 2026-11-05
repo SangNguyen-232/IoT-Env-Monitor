@@ -17,6 +17,8 @@ services:
       - pgdata18:/var/lib/postgresql
       - ./database/schema/base.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./database/migrations/001_auth.sql:/docker-entrypoint-initdb.d/02_auth.sql
+      - ./database/migrations/003_session_login_at.sql:/docker-entrypoint-initdb.d/03_session_login_at.sql
+      - ./database/migrations/004_time_display_views.sql:/docker-entrypoint-initdb.d/04_time_display_views.sql
     networks:
       - iot_net
     healthcheck:

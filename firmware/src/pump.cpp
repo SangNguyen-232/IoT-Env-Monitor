@@ -88,8 +88,6 @@ void task_pump(void *pvParameters)
                 if (xSemaphoreTake(xMutexPumpControl, pdMS_TO_TICKS(200)) == pdTRUE) {
                     pump_manual_state = false;
                     xSemaphoreGive(xMutexPumpControl);
-                    new_state = false;
-                    auto_pump_on = false;
                     pump_on_since = 0;
                     serialLogLock();
                     Serial.println("[PUMP] MANUAL chay qua gioi han thoi gian -> tu tat bom");

@@ -1,8 +1,6 @@
 # ESP32-S3 IoT Environmental Monitoring System
 
-A real-time IoT environmental monitoring system running on the **ESP32-S3 (Yolo Uno)** microcontroller. The system integrates multi-sensor data acquisition, multi-channel hardware alerting, automatic pump control, on-device TinyML inference, an embedded web server, and a Node.js/PostgreSQL backend with an Admin Dashboard for managing multiple devices.
-
-> **Upgrade (2026-10-16):** See [UPGRADE.md](UPGRADE.md) for current versions, validation commands, and the required PostgreSQL 16 → 18 backup/restore procedure before restarting an existing installation.
+A real-time IoT environmental monitoring and irrigation control system running on the **ESP32-S3 (Yolo Uno)** microcontroller, paired with a containerized **Node.js + PostgreSQL** backend, **Cloudflare Tunnel / Worker Gateway**, and an on-device **TinyML** risk classifier.
 
 ---
 
@@ -10,783 +8,486 @@ A real-time IoT environmental monitoring system running on the **ESP32-S3 (Yolo 
 
 - [Overview](#overview)
 - [System Architecture](#system-architecture)
-- [Hardware](#hardware)
+- [Hardware Pinout](#hardware-pinout)
 - [Directory Structure](#directory-structure)
 - [ESP32-S3 Firmware](#esp32-s3-firmware)
   - [FreeRTOS Tasks](#freertos-tasks)
-  - [SharedContext](#sharedcontext)
-  - [Synchronization Mechanisms](#synchronization-mechanisms)
-  - [Risk Classification Logic](#risk-classification-logic)
-  - [TinyML](#tinyml)
-  - [Wi-Fi and Embedded Web Server](#wi-fi-and-embedded-web-server)
-  - [Pump Control](#pump-control)
-  - [LittleFS](#littlefs)
-  - [Factory Reset](#factory-reset)
-- [Node.js Backend](#nodejs-backend)
-  - [API Endpoints](#api-endpoints)
-  - [PostgreSQL Database](#postgresql-database)
-  - [Authentication and Authorization](#authentication-and-authorization)
-- [Frontend](#frontend)
-  - [Device Dashboard (embedded on ESP32)](#device-dashboard-embedded-on-esp32)
-  - [Admin Dashboard (Node.js)](#admin-dashboard-nodejs)
-- [ML Pipeline](#ml-pipeline)
-- [Utility Scripts](#utility-scripts)
-- [Installation and Deployment](#installation-and-deployment)
-- [Security Notes](#security-notes)
-- [Libraries Used](#libraries-used)
+  - [SharedContext & Synchronization](#sharedcontext--synchronization)
+  - [Risk Classification Policy](#risk-classification-policy)
+  - [TinyML Inference](#tinyml-inference)
+  - [Pump Control & Safety Interlocks](#pump-control--safety-interlocks)
+  - [Wi-Fi, Captive Portal & Embedded Web Server](#wi-fi-captive-portal--embedded-web-server)
+  - [LittleFS Storage & Factory Reset](#littlefs-storage--factory-reset)
+- [Backend, Database & Edge Gateway](#backend-database--edge-gateway)
+  - [Backend API Endpoints](#backend-api-endpoints)
+  - [PostgreSQL Schema & Migrations](#postgresql-schema--migrations)
+  - [Authentication, RBAC & HMAC Device Tickets](#authentication-rbac--hmac-device-tickets)
+  - [Cloudflare Tunnel & Worker Gateway](#cloudflare-tunnel--worker-gateway)
+- [Dashboards](#dashboards)
+  - [Embedded Device Dashboard](#embedded-device-dashboard)
+  - [Central Admin Dashboard](#central-admin-dashboard)
+- [TinyML Training Pipeline](#tinyml-training-pipeline)
+- [Device Utility Tools](#device-utility-tools)
+- [Installation & Deployment](#installation--deployment)
+- [Libraries & Runtime Versions](#libraries--runtime-versions)
 
 ---
 
 ## Overview
 
-The project monitors three environmental parameters — **temperature**, **air humidity**, and **soil moisture** — on a 5-second cycle. Each cycle:
+Every **5 seconds**, each ESP32-S3 node samples **temperature**, **air humidity**, and **soil moisture**, then coordinates local actuation, edge inference, and telemetry reporting:
 
-1. Data is displayed on a **16×2 LCD screen**, showing temperature, air humidity, soil moisture, and system status.
-2. A **single LED (GPIO48)** blinks at a rate that reflects the temperature risk level.
-3. A **NeoPixel WS2812B (GPIO45)** changes color to reflect the air humidity risk level — updated only when the state changes (event-driven).
-4. The **pump (GPIO6)** turns on/off automatically based on soil moisture thresholds, or is controlled manually from the Dashboard.
-5. A **TinyML model (TensorFlow Lite Micro)** classifies the composite risk level directly on-chip.
-6. Data is pushed via **WebSocket** to the embedded Device Dashboard and sent via **HTTP POST** to the Node.js/PostgreSQL backend.
+1. **16×2 I2C LCD (`0x27`)** displays live `T`, `H`, `SM`, and composite safety status (`NORM` / `WARN` / `CRIT`).
+2. **Status LED (`GPIO48`)** blinks at a period determined by temperature risk (`Normal` 1000 ms, `Warning` 500 ms, `Critical` 100 ms per phase).
+3. **WS2812B NeoPixel (`GPIO45`)** updates color on state transitions according to air humidity risk (Green / Yellow / Red).
+4. **Irrigation Pump (`GPIO10`)** operates in `AUTO` mode (with hysteresis, max-runtime cutoff, cooldown, stale-sample protection, and ineffective-watering fault lock) or `MANUAL` mode (with a 5-minute safety cutoff).
+5. **TinyML (`TensorFlow Lite Micro`)** runs a float32 neural network (`3 → 32 → 16 → 3`) on-chip and tracks cumulative rolling accuracy (`mlRollAcc`) against the mathematical policy.
+6. **Embedded Web Server (`port 80` + `/ws`)** serves the local Device Dashboard over LittleFS to authenticated clients and supports browser-based OTA updates (`/update`).
+7. **Telemetry Client** posts JSON payloads (`X-Device-Key`) over HTTP/HTTPS to the Node.js backend (`POST /sensor`), which stores records in **PostgreSQL 18** for multi-device monitoring via the **Admin Dashboard**.
 
 ---
 
 ## System Architecture
 
-```
-┌─────────────────────────────────────────────────────┐
-│                  ESP32-S3 (Yolo Uno)                │
-│                                                     │
-│  ┌──────────────┐    ┌────────────────────────────┐ │
-│  │  FreeRTOS    │    │       SharedContext        │ │
-│  │  Tasks       │◄──►│  temperature / humidity    │ │
-│  │              │    │  soilMoisture / ledState   │ │
-│  │ temp_humi    │    │  neoState / lcdState       │ │
-│  │ led_blinky   │    │  mlStatus / mlRollAcc      │ │
-│  │ neo_blinky   │    │  timestampReal / Us        │ │
-│  │ task_pump    │    │  dbTriggerSource           │ │
-│  │ tiny_ml_task │    │  mutexContext              │ │
-│  │ task_database│    │  sem{LED/Neo/LCD/DB}Update │ │
-│  │ Task_BOOT    │    └────────────────────────────┘ │
-│  └──────────────┘                                   │
-│                                                     │
-│  LittleFS: /info.dat, /wifi_list.json, web assets   │
-│  ESPAsyncWebServer (port 80) + WebSocket (/ws)      │
-│  ElegantOTA (/update)                               │
-└────────────────┬────────────────────────────────────┘
-                 │ HTTP POST /sensor  (port 3000)
-                 │ WebSocket ws://device_ip/ws
-                 ▼
-┌─────────────────────────────────────────────────────┐
-│              Node.js Backend (port 3000)            │
-│  Express.js + express-session (8 hours)             │
-│  PostgreSQL: iot_db                                 │
-│   ├── sensor_logs (13 columns)                      │
-│   ├── system_users (admin / user)                   │
-│   └── device_credentials                            │
-│  Admin Dashboard (/admin) — multi-device management │
-└─────────────────────────────────────────────────────┘
+```text
+┌──────────────────────────────────────────────────────────────────────┐
+│                        ESP32-S3 (Yolo Uno)                           │
+│                                                                      │
+│  FreeRTOS Tasks (priority 2)          SharedContext + Mutex/Sem      │
+│  ├── temp_humi_monitor (4096w)  ───►  temperature, humidity          │
+│  ├── led_blinky        (2048w)  ◄───  soilMoisture, soilSampleValid  │
+│  ├── neo_blinky        (2048w)  ◄───  ledState, neoState, lcdState   │
+│  ├── task_pump         (3072w)  ◄──►  mlRollAcc, dbTriggerSource     │
+│  ├── tiny_ml_task      (8192w)  ◄──►  timestampReal / timestampRealUs│
+│  ├── task_database     (8192w)  ◄───  sem{LED,Neo,DB}Update          │
+│  └── Task_Toggle_BOOT  (4096w)                                       │
+│                                                                      │
+│  LittleFS: /dashboard.{html,css,js}, /info.dat, /wifi_list.json,     │
+│            /server.json                                              │
+│  ESPAsyncWebServer (:80) + Authenticated WebSocket (/ws) + ElegantOTA│
+└──────────────────┬───────────────────────────────────┬───────────────┘
+                   │ HTTPS POST /sensor                │ LAN HTTP / WS
+                   │ (Header: X-Device-Key)            │ (HMAC Ticket or Basic Auth)
+                   ▼                                   ▼
+┌──────────────────────────────────────┐     ┌─────────────────────────┐
+│ Cloudflare Worker Gateway (optional) │     │ Browser (Same LAN)      │
+│ services/gateway (VPC Service proxy) │     │ Embedded Device UI      │
+└──────────────────┬───────────────────┘     └─────────▲───────────────┘
+                   │ cloudflared tunnel                │ ?ticket=<HMAC>
+                   ▼                                   │
+┌──────────────────────────────────────────────────────┴───────────────┐
+│                   Docker Compose Stack (iot_net)                     │
+│  ├── cloudflared : Cloudflare Tunnel connector                       │
+│  ├── backend     : Node.js + Express 5 (:3000, Admin UI + REST API)  │
+│  └── postgres    : PostgreSQL 18 (iot_db, Asia/Ho_Chi_Minh)          │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Hardware
+## Hardware Pinout
 
-| Component                | GPIO / Interface                              | Role                                                   |
-| ------------------------ | --------------------------------------------- | ------------------------------------------------------ |
-| ESP32-S3 (Yolo Uno)      | —                                            | Central microcontroller running FreeRTOS + TinyML      |
-| DHT20 Sensor             | I2C: SDA=GPIO11, SCL=GPIO12                   | Measures temperature and air humidity                  |
-| Soil Moisture Sensor     | ADC: GPIO2 (`SOIL_PIN = 2`)                 | Measures soil moisture; raw ADC [0–4095] → [0–100]% |
-| 16×2 LCD                | I2C: address 0x27                             | Displays T / H / SM / system status                    |
-| Onboard single LED       | GPIO48 (`LED_GPIO = 48`)                    | Blinks according to the temperature risk level         |
-| NeoPixel WS2812B (1 LED) | GPIO45 (`NEO_PIN = 45`), NEO_GRB+NEO_KHZ800 | Changes color according to the air humidity risk level |
-| Mini pump (via relay)    | GPIO6 (`PUMP_PIN = 6`)                      | Controls automatic/manual irrigation                   |
-| BOOT button              | GPIO0 (`INPUT_PULLUP`)                      | Hold > 2 seconds to trigger factory reset              |
+| Component | GPIO / Bus | Configuration & Role |
+| :--- | :--- | :--- |
+| **ESP32-S3 (Yolo Uno)** | — | 240 MHz MCU, 8 MB Flash (`default_8MB.csv`), FreeRTOS + TFLite Micro |
+| **DHT20 Sensor** | I2C (`SDA = GPIO11`, `SCL = GPIO12`) | Ambient temperature (°C) and relative humidity (%) |
+| **Soil Moisture Sensor** | ADC (`SOIL_PIN = GPIO2`) | Raw ADC `[0–4095]` mapped linearly to `[0–100]%` |
+| **16×2 I2C LCD** | I2C (`0x27`, `SDA = 11`, `SCL = 12`) | Displays `T`, `H`, `SM`, and composite safety status |
+| **Status LED** | `LED_GPIO = GPIO48` | Blinks according to temperature risk level |
+| **NeoPixel WS2812B** | `NEO_PIN = GPIO45` (`LED_COUNT = 1`) | Displays RGB color according to humidity risk level |
+| **Mini Water Pump (Relay)** | `PUMP_PIN = GPIO10` | Active-HIGH relay output controlled by `task_pump` |
+| **BOOT Button** | `BOOT_PIN = GPIO0` (`INPUT_PULLUP`) | Hold `> 2 s` for factory reset of network/server config |
 
 ---
 
 ## Directory Structure
 
-```
-Internship_Project/
-├── src/                         # C++ firmware for ESP32
-│   ├── main.cpp                 # setup() / loop(), creates FreeRTOS tasks
-│   ├── global.cpp               # Global variable definitions
-│   ├── temp_humi_monitor.cpp    # Reads DHT20 + soil sensor, LCD, WebSocket
-│   ├── led_blinky.cpp           # Single LED control task
-│   ├── neo_blinky.cpp           # NeoPixel control task
-│   ├── pump.cpp                 # Pump control task (AUTO/MANUAL)
-│   ├── tinyml.cpp               # TensorFlow Lite Micro inference task
-│   ├── task_database.cpp        # HTTP POST to backend task
-│   ├── task_webserver.cpp       # ESPAsyncWebServer, WebSocket, embedded REST API
-│   ├── task_wifi.cpp            # AP Mode / STA Mode / NTP / network switching
-│   ├── task_check_info.cpp      # Manages /info.dat and /wifi_list.json (LittleFS)
-│   ├── task_handler.cpp         # Handles WebSocket messages from clients
-│   ├── task_toogle_boot.cpp     # Factory reset via BOOT button (GPIO0)
-│   └── serial_log.cpp           # Mutex-protected Serial output
-├── include/
-│   ├── global.h                 # SharedContext struct, extern global variable declarations
-│   ├── risk_label.h             # Risk classification functions and safety interlock
-│   ├── dht_anomaly_model.h      # TFLite model embedded as a C byte array
-│   ├── project_includes.h       # Common include aggregation
-│   └── *.h                      # Header files for each module
-├── data/
-│   └── wifi_info.json           # Wi-Fi list (exported by pull_wifi_info.py)
+```text
+IoT-Env-Monitor/
+├── database/
+│   ├── schema/
+│   │   └── base.sql                       # Core tables: sensor_logs, device_credentials
+│   └── migrations/
+│       ├── 001_auth.sql                   # system_users & user_devices (RBAC)
+│       ├── 002_timezone.sql               # Legacy timestamp -> timestamptz conversion
+│       ├── 003_session_login_at.sql       # Express session table + login_at column
+│       └── 004_time_display_views.sql     # Read-only display.* views in Vietnam time
+├── firmware/
+│   ├── boards/
+│   │   └── yolo_uno.json                  # Custom PlatformIO board manifest (ESP32-S3 8MB)
+│   ├── data/                              # LittleFS web assets (uploaded via uploadfs)
+│   │   ├── dashboard.html
+│   │   ├── dashboard.css
+│   │   └── dashboard.js
+│   ├── include/
+│   │   ├── device_config.h                # LittleFS config & Wi-Fi credential persistence
+│   │   ├── dht_risk_model.h               # Embedded TFLite model byte array (alignas(16))
+│   │   ├── environment_monitor.h          # Sensor polling + LCD + WebSocket broadcast task
+│   │   ├── factory_reset.h                # BOOT button long-press reset task
+│   │   ├── input_safety.h                 # Sanitization, frame checks, freshness helpers
+│   │   ├── message_handler.h              # Authenticated WebSocket command dispatcher
+│   │   ├── pump.h                         # Pump state & mutex declarations
+│   │   ├── rgb_led.h                      # NeoPixel task declaration
+│   │   ├── risk_policy.h                  # Safety interlock + piecewise risk scoring
+│   │   ├── secrets.h.example              # Template for firmware/include/secrets.h
+│   │   ├── serial_log.h                   # Mutex-protected Serial logging
+│   │   ├── shared_context.h               # SharedContext struct & Wi-Fi switch sync primitives
+│   │   ├── status_led.h                   # Single LED blink task declaration
+│   │   ├── telemetry_client.h             # HTTP/HTTPS backend telemetry task declaration
+│   │   ├── tinyml.h                       # TinyML task declaration
+│   │   ├── web_server.h                   # Embedded HTTP/WS/OTA server interface
+│   │   └── wifi_manager.h                 # STA/AP/Captive DNS/SNTP manager
+│   ├── lib/
+│   │   └── lcd_i2c/                       # Local LiquidCrystal_I2C driver
+│   └── src/                               # Firmware C++ implementations
+│       ├── main.cpp
+│       ├── device_config.cpp
+│       ├── environment_monitor.cpp
+│       ├── factory_reset.cpp
+│       ├── message_handler.cpp
+│       ├── pump.cpp
+│       ├── rgb_led.cpp
+│       ├── serial_log.cpp
+│       ├── shared_context.cpp
+│       ├── status_led.cpp
+│       ├── telemetry_client.cpp
+│       ├── tinyml.cpp
+│       ├── web_server.cpp
+│       └── wifi_manager.cpp
 ├── ml/
-│   ├── train_export.py          # Training and TFLite export script
-│   ├── dataset.csv              # Synthetic training dataset (21,000 rows)
-│   ├── dht_risk_model.tflite    # Trained TFLite model
-│   └── requirements.txt         # tensorflow, numpy
-├── BE/                          # Node.js Backend
-│   ├── index.js                 # Express server, REST API, session management
-│   ├── admin_static/            # Admin Dashboard (HTML/CSS/JS)
-│   └── login_static/            # Login page
-├── FE/                          # Device Dashboard (uploaded to LittleFS)
-│   ├── dashboard.html
-│   ├── dashboard.css
-│   └── dashboard.js
-├── DB/
-│   ├── DB.sql                   # Creates database, sensor_logs table, device_credentials table
-│   └── auth_migration.sql       # Creates system_users table and default accounts
-├── scripts/
-│   ├── pull_wifi_info.py        # Reads /wifi_list.json from ESP32 flash to the host machine
-│   ├── split_libs.ps1           # Utility to split libraries during build
-│   └── README_split_libs.md     # Documentation for split_libs
-├── boards/
-│   └── yolo_uno.json            # Board definition for PlatformIO
-└── platformio.ini               # PlatformIO build configuration
+│   ├── data/
+│   │   └── dataset.csv                    # Generated training dataset (21,000 samples)
+│   ├── models/
+│   │   └── dht_risk_model.tflite          # Exported float32 TFLite model
+│   ├── requirements.txt                   # Python dependencies (numpy, tensorflow)
+│   └── train_export.py                    # Dataset generator, trainer, validator & C exporter
+├── services/
+│   ├── backend/                           # Express 5 + PostgreSQL API & Admin UI
+│   │   ├── public/
+│   │   │   ├── admin/                     # Multi-device Admin Dashboard (HTML/CSS/JS)
+│   │   │   └── login/                     # Session Login UI
+│   │   ├── src/
+│   │   │   └── index.js                   # Server entrypoint
+│   │   ├── Dockerfile
+│   │   ├── .dockerignore
+│   │   ├── package.json
+│   │   └── package-lock.json
+│   └── gateway/                           # Cloudflare Worker reverse proxy (VPC Service)
+│       ├── src/
+│       │   └── index.js
+│       ├── package.json
+│       ├── package-lock.json
+│       └── wrangler.jsonc
+├── tools/
+│   └── device/
+│       ├── pull_wifi_info.py              # Reads /wifi_list.json from ESP32 LittleFS partition
+│       └── requirements.txt               # esptool, littlefs-python
+├── .editorconfig
+├── .env.example                           # Environment variable template for Docker / Backend
+├── .gitignore
+├── .nvmrc
+├── .python-version
+├── docker-compose.yml                     # PostgreSQL 18 + Backend + Cloudflared stack
+├── platformio.ini                         # PlatformIO configuration (env:yolo_uno)
+└── pyproject.toml                         # Python tooling configuration
 ```
-
-> **Important:** `data_dir = FE` in `platformio.ini` means that **only the contents of the `FE/` directory** are uploaded to LittleFS via `pio run --target uploadfs`. The `data/wifi_info.json` file is not automatically uploaded. To load the Wi-Fi list onto the device, copy this file into `FE/` and rename it to `wifi_list.json` before running the filesystem upload command.
 
 ---
 
 ## ESP32-S3 Firmware
 
-The entire firmware is developed using the **Arduino Framework on PlatformIO**, running on the **FreeRTOS** scheduler integrated into the ESP32-S3.
-
-**AP Mode credentials** (defined in `platformio.ini`):
-
-- SSID: `ESP32 LOCAL`
-- Password: `12345678`
-
 ### FreeRTOS Tasks
 
-`setup()` initializes `SharedContext` and then creates 7 tasks, all at priority 2:
+`setup()` initializes `SharedContext`, synchronization primitives, LittleFS configuration, and spawns **7 FreeRTOS tasks** at priority `2`:
 
-| Task                  | Stack (words) | Parameter | Description                                                                                      |
-| --------------------- | ------------- | --------- | ------------------------------------------------------------------------------------------------ |
-| `temp_humi_monitor` | 2048          | ctx       | Reads DHT20 + soil sensor every 5 seconds, updates SharedContext, LCD, and pushes WebSocket data |
-| `led_blinky`        | 2048          | ctx       | Blinks LED GPIO48 according to`ledState`                                                       |
-| `neo_blinky`        | 2048          | ctx       | Updates NeoPixel GPIO45 color when`semNeoUpdate` is received                                   |
-| `task_pump`         | 2048          | ctx       | Controls pump GPIO6 every 100 ms (AUTO or MANUAL mode)                                           |
-| `tiny_ml_task`      | 8192          | ctx       | Runs TFLite Micro inference every 5 seconds and tracks`mlRollAcc`                              |
-| `task_database`     | 4096          | ctx       | Sends HTTP POST to backend with 200 ms debounce                                                  |
-| `Task_Toogle_BOOT`  | 4096          | NULL      | Monitors BOOT button GPIO0; triggers factory reset if held > 2 seconds                           |
+| Task Function | Stack (words) | Period / Trigger | Responsibility |
+| :--- | :---: | :--- | :--- |
+| `temp_humi_monitor` | `4096` | Every `5000 ms` | Reads DHT20 & soil ADC, computes risk states, updates 16×2 LCD, broadcasts WebSocket sensor JSON, signals `semLEDUpdate`, `semNeoUpdate`, and `semDBUpdate` |
+| `led_blinky` | `2048` | Phase delay / `semLEDUpdate` | Blinks `GPIO48` (`1000 ms`, `500 ms`, or `100 ms` per HIGH/LOW phase); adapts immediately when `semLEDUpdate` fires |
+| `neo_blinky` | `2048` | Event-driven (`semNeoUpdate`) | Updates WS2812B (`GPIO45`) color only when `neoState` changes |
+| `task_pump` | `3072` | Every `100 ms` | Drives pump relay (`GPIO10`) in `AUTO` or `MANUAL` mode with runtime/fault protections; pushes WebSocket & DB events on state change |
+| `tiny_ml_task` | `8192` | Every `5000 ms` | Runs TFLite Micro inference on `[T, H, SM]` and updates cumulative `mlRollAcc` |
+| `task_database` | `8192` | Event-driven (`semDBUpdate`) | Sends `POST /sensor` with `200 ms` per-source debounce and pump-event priority |
+| `Task_Toggle_BOOT` | `4096` | Polled every `50 ms` | Triggers factory reset if `BOOT` (`GPIO0`) is held `> 2000 ms` |
 
-**Responsibilities of `loop()`:**
-
-1. Checks the `g_wifiSwitchFlag` flag → calls `Wifi_switch_to()` to switch Wi-Fi networks without restarting.
-2. Calls `check_info_File(1)` — if an SSID is saved but `Wifi_reconnect()` fails → calls `Webserver_stop()`.
-3. Calls `Webserver_reconnect()` — restarts the web server if it is stopped; this function also calls `ElegantOTA.loop()` internally to handle OTA updates.
-
-> **Note:** `ElegantOTA.loop()` is called **inside** `Webserver_reconnect()`, not as a standalone call in `loop()`.
+`loop()` handles non-blocking runtime maintenance (`100 ms` cadence):
+- Executes live Wi-Fi switching (`Wifi_switch_to()`) when `g_wifiSwitchFlag` is raised.
+- Steps the non-blocking STA reconnection state machine (`Wifi_reconnect()`) and Captive Portal DNS server (`Wifi_processCaptiveDNS()`).
+- Keeps the HTTP/WebSocket server active (`Webserver_reconnect()`) and services `ElegantOTA.loop()`.
 
 ---
 
-### SharedContext
+### SharedContext & Synchronization
 
-The central data structure shared between all tasks (defined in `include/global.h`):
+Defined in `firmware/include/shared_context.h`:
 
 ```cpp
 struct SharedContext {
-    float temperature;           // °C, -1 if NaN
-    float humidity;              // %, -1 if NaN
-    int   soilMoisture;          // % [0–100], mapped from ADC [0–4095]
-    int   soilRaw;               // Raw ADC value
-    int   ledState;              // 1=Normal / 2=Warning / 3=Critical (temperature)
-    int   neoState;              // 1=Normal / 2=Warning / 3=Critical (air humidity)
-    int   lcdState;              // 1/2/3, computed by risk_final_safety_label()
-    int   mlPredicted;           // TinyML predicted label (1/2/3)
-    float mlConfidence;          // Highest Softmax probability
-    char  mlStatus[16];          // "Normal" / "Warning" / "Critical" / "Mismatch"
-    float mlRollAcc;             // Cumulative rolling accuracy (%), accumulated over the entire session
-    time_t      timestampReal;   // Seconds since epoch (NTP), 0 if not synchronized
-    suseconds_t timestampRealUs; // Microseconds part of the NTP timestamp
-    char  dbTriggerSource[8];    // "sensor" or "pump"
-    // FreeRTOS handles
+    float temperature;
+    float humidity;
+    int soilMoisture;
+    bool soilSampleValid;
+    uint32_t soilSampledAtMs;
     SemaphoreHandle_t mutexContext;
     SemaphoreHandle_t semLEDUpdate;
+    int ledState;
     SemaphoreHandle_t semNeoUpdate;
-    SemaphoreHandle_t semLCDUpdate;
+    int neoState;
+    int lcdState;
     SemaphoreHandle_t semDBUpdate;
+    time_t timestampReal;
+    suseconds_t timestampRealUs;
+    float mlRollAcc;
+    char dbTriggerSource[8];   // "sensor" | "pump"
 };
 ```
 
----
-
-### Synchronization Mechanisms
-
-| Mechanism                  | Type             | Purpose                                                                                                               |
-| -------------------------- | ---------------- | --------------------------------------------------------------------------------------------------------------------- |
-| `mutexContext`           | Mutex            | Protects all sensor data and state fields within SharedContext                                                        |
-| `xMutexPumpControl`      | Mutex            | Independently protects pump control variables (`global_pump_state`, `pump_manual_control`, `pump_manual_state`) |
-| `semLEDUpdate`           | Binary Semaphore | Signaled by`temp_humi_monitor` when `ledState` changes → `led_blinky` immediately updates blink frequency      |
-| `semNeoUpdate`           | Binary Semaphore | Same mechanism, for the NeoPixel                                                                                      |
-| `semLCDUpdate`           | Binary Semaphore | Same mechanism, for the LCD status                                                                                    |
-| `semDBUpdate`            | Binary Semaphore | Signaled after each sensor read cycle or when the pump state changes →`task_database` sends an HTTP POST           |
-| `serialLogLock / Unlock` | Dedicated Mutex  | Prevents tasks from interleaving their Serial output                                                                  |
+- **`mutexContext`**: Guards reads/writes to `SharedContext` fields across tasks.
+- **`xMutexPumpControl`**: Guards `global_pump_state`, `global_pump_mode`, `pump_manual_control`, and `pump_manual_state`.
+- **`g_wifiSwitchMutex`**: Guards pending Wi-Fi switch credentials (`g_wifiSwitchSSID`, `g_wifiSwitchPass`, `g_wifiSwitchFlag`).
+- **`serialLogLock()` / `serialLogUnlock()`**: Prevents interleaved UART logs across concurrent tasks.
 
 ---
 
-### Risk Classification Logic
+### Risk Classification Policy
 
-All thresholds are defined in `include/risk_label.h`.
+Defined in `firmware/include/risk_policy.h` (`1 = Normal`, `2 = Warning`, `3 = Critical`):
 
-**Single LED — based on temperature (`risk_led_state_from_temperature`):**
-
-| State    | Temperature            | Duration per phase (HIGH/LOW) |
-| -------- | ---------------------- | ----------------------------- |
-| Normal   | 15°C – 25°C         | 1000 ms                       |
-| Warning  | 10–15°C or 25–30°C | 500 ms                        |
-| Critical | < 10°C or > 30°C     | 100 ms                        |
-
-> **Note:** Each phase (HIGH or LOW) is held for the duration listed above. The full blink cycle is approximately twice that: ~2000 ms / ~1000 ms / ~200 ms. If a `semLEDUpdate` signal is received while waiting, the LED turns off immediately and the loop restarts to adopt the new frequency.
-
-**NeoPixel — based on air humidity (`risk_neo_state_from_humidity`):**
-
-| State    | Air Humidity       | Color                   |
-| -------- | ------------------ | ----------------------- |
-| Normal   | 60% – 70%         | Green`(0, 255, 0)`    |
-| Warning  | 50–60% or 70–80% | Yellow`(255, 255, 0)` |
-| Critical | < 50% or > 80%     | Red`(255, 0, 0)`      |
-
-> The NeoPixel is initialized to the color corresponding to `neoState = 1` (green) before entering the main loop. Inside the loop, the task waits on `semNeoUpdate` with `portMAX_DELAY` — color is updated only when a signal is received, with no continuous polling.
-
-**Soil Moisture (`risk_soil_state_from_moisture`):**
-
-| State    | Soil Moisture      |
-| -------- | ------------------ |
-| Normal   | 30% – 40%         |
-| Warning  | 25–30% or 40–45% |
-| Critical | < 25% or > 45%     |
-
-**LCD and Database — composite label (`risk_final_safety_label`):**
-
-**Step 1 — Hard Safety Interlock:** If `T ≥ 40°C` OR `H ≥ 90%` OR `soil < 15%` OR `soil > 60%` → returns Critical immediately, bypassing Step 2.
-
-**Step 2 — Piecewise linear penalty algorithm** (`risk_pure_mathematical_label`):
-
-```
-r = 0.35 × penalty(T) + 0.20 × penalty(H) + 0.45 × penalty(soil)
-
-r ≤ 3.0  → Normal  (label = 1)
-r ≤ 6.5  → Warning (label = 2)
-r > 6.5  → Critical (label = 3)
-```
-
-**Optimal zone** (penalty = 0): T∈[15,25]°C, H∈[60,70]%, soil∈[30,40]%.
+1. **Temperature (`ledState`)**:
+   - `Normal`: `15°C ≤ T ≤ 25°C` (`1000 ms` blink phase)
+   - `Warning`: `10°C ≤ T < 15°C` or `25°C < T ≤ 30°C` (`500 ms` blink phase)
+   - `Critical`: `T < 10°C` or `T > 30°C` (`100 ms` blink phase)
+2. **Air Humidity (`neoState`)**:
+   - `Normal`: `60% ≤ H ≤ 70%` → Green `(0, 255, 0)`
+   - `Warning`: `50% ≤ H < 60%` or `70% < H ≤ 80%` → Yellow `(255, 255, 0)`
+   - `Critical`: `H < 50%` or `H > 80%` → Red `(255, 0, 0)`
+3. **Composite Safety Label (`lcdState` & DB `Message`)**:
+   - **Hard Safety Interlock**: Immediately returns `Critical (3)` if `T ≥ 40°C`, `H ≥ 90%`, `soil < 15%`, or `soil > 60%`.
+   - **Weighted Piecewise Penalty (`risk_pure_mathematical_label`)**:
+     $$r = 0.35 \cdot \text{score}(T) + 0.20 \cdot \text{score}(H) + 0.45 \cdot \text{score}(\text{soil})$$
+     - `r ≤ 3.0` → `Normal (1)`
+     - `3.0 < r ≤ 6.5` → `Warning (2)`
+     - `r > 6.5` → `Critical (3)`
 
 ---
 
-### TinyML
+### TinyML Inference
 
-A 3-class classifier (Normal/Warning/Critical) running on the ESP32-S3 via **TensorFlow Lite Micro**.
-
-**Network architecture:** `Input(3) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)`
-
-**Tensor arena:** 16 KiB (`kTensorArenaSize = 16 * 1024`), statically allocated.
-
-**Data type:** float32 — no quantization (`converter.optimizations = []`).
-
-**Input:** `[temperature, humidity, soil_moisture]` as float32.
-
-**Output:** probability vector `[p0, p1, p2]` — `predicted = argmax(output) + 1` (maps index 0..2 → label 1..3).
-
-**On-device evaluation:**
-
-- `expected` = `risk_pure_mathematical_label(T, H, S)` — the safety interlock is **not** applied here.
-- `mlRollAcc = correct / inferences × 100%` — accumulated across the entire running session.
-- **`mlStatus` determination:**
-  - If the safety interlock triggers (`T ≥ 40 OR H ≥ 90 OR soil < 15 OR soil > 60`) → `mlStatus = "Critical"` regardless of predicted/expected.
-  - Otherwise, if `predicted == expected` → `mlStatus` = the corresponding state name (`"Normal"` / `"Warning"` / `"Critical"`).
-  - If `predicted ≠ expected` and no safety trigger → `mlStatus = "Mismatch"`.
-
-**Serial log per cycle (115200 baud):**
-
-```
-TinyML T=XX.X°C H=XX.X% S=XX% | rule=N pred=N | <status> | p=[p0,p1,p2] | Xms | roll_acc=XX.X% (correct/total)
-```
-
-**Inference time** is measured using `millis()` before and after `Invoke()`.
-
-**Retraining:** run `ml/train_export.py` → generates `ml/dht_risk_model.tflite` → automatically converted to `include/dht_anomaly_model.h` for embedding into the firmware.
+Implemented in `firmware/src/tinyml.cpp` using `TensorFlowLite_ESP32`:
+- **Architecture**: `Input(3) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)` (float32, 16 KiB tensor arena).
+- **Validation**: Skips invalid/NaN sensor readings (`sensor_readings_valid()`), compares `argmax` prediction against `risk_pure_mathematical_label()`, and updates session-wide rolling accuracy `mlRollAcc` (reported to PostgreSQL in the `Score` field).
 
 ---
 
-### Wi-Fi and Embedded Web Server
+### Pump Control & Safety Interlocks
 
-**Boot sequence:**
-
-```
-setup()
-  └── check_info_File(false)
-        ├── LittleFS.begin(true)
-        ├── Reads /info.dat → retrieves WIFI_SSID, WIFI_PASS, STA_IP
-        ├── WIFI_SSID is empty → startAP()   [AP Mode: "ESP32 LOCAL" / "12345678"]
-        └── WIFI_SSID is saved → loop() → Wifi_reconnect() → startSTA()
-                └── Connection successful:
-                      ├── Save_sta_ip_File() → updates STA_IP in /info.dat
-                      ├── configTime(7*3600, 0, "pool.ntp.org", "time.nist.gov")
-                      └── xSemaphoreGive(xBinarySemaphoreInternet)
-```
-
-STA connection timeout: **10 seconds** (`millis() - start < 10000`).
-
-**Backend target URL configuration (`SENSOR_API_URL`):**
-
-The ESP32 reads the backend server URL (`g_sensorApiUrl`) from `SENSOR_API_URL` (defined in `secrets.h`), which supports HTTPS domains or Cloudflare Tunnels. If `/server.json` exists in LittleFS (configurable via the web settings), its `url` value overrides the default. `task_database` automatically appends `/sensor` and sends data via HTTP/HTTPS POST.
-
-**Switching Wi-Fi networks without restarting** (`POST /api/wifi-switch`):
-
-1. Writes `g_wifiSwitchSSID`, `g_wifiSwitchPass`, and sets `g_wifiSwitchFlag = true`.
-2. `loop()` detects the flag → calls `Wifi_switch_to()`.
-3. `Wifi_switch_to()` calls `Save_wifi_to_list()` + `Save_info_NoRestart()` to persist the new network, then `WiFi.disconnect(true)` → delay 500 ms → `startSTA()` (no `ESP.restart()`).
-
-**Wi-Fi list management (`/wifi_list.json`):** The most recently added SSID is inserted at the beginning of the list; if the SSID already exists, only its password is updated in place.
-
-**Embedded REST API (port 80):**
-
-| Endpoint                       | Method    | Description                                                           |
-| ------------------------------ | --------- | --------------------------------------------------------------------- |
-| `/`                          | GET       | Serves`dashboard.html` from LittleFS                                |
-| `/ws`                        | WebSocket | Pushes sensor data every 5 seconds; receives control commands         |
-| `/api/status`                | GET       | Returns`{"mqtt_connected": true, "is_ap_mode": bool}`               |
-| `/toggle-pump?state=ON\|OFF`  | GET       | Manually turns the pump on/off (toggles if no parameter is given)     |
-| `/set-mode?mode=AUTO\|MANUAL` | GET       | Switches the pump operating mode                                      |
-| `/api/wifi-list`             | GET       | Returns the saved Wi-Fi network list from`/wifi_list.json`          |
-| `/api/wifi-switch`           | POST      | Switches to a new Wi-Fi network without restarting (`{ssid, pass}`) |
-| `/update`                    | GET/POST  | ElegantOTA — over-the-air firmware update via browser                |
-
-**WebSocket payload from device** (every 5 seconds):
-
-```json
-{"temperature": 25.30, "humidity": 65.20, "soil_moisture": 35, "lcd_state": 1}
-```
-
-**WebSocket pump state payload:**
-
-```json
-{"pump_state": "ON", "pump_mode": "MANUAL"}
-```
-
-When a new WebSocket client connects, the server immediately sends the current pump state to synchronize the UI.
+Implemented in `firmware/src/pump.cpp` on `PUMP_PIN = GPIO10`:
+- **Freshness Guard**: In `AUTO` mode, if no valid soil sample has been recorded within `SOIL_SAMPLE_STALE_MS` (`15 s`), the pump stays `OFF`.
+- **AUTO Mode**:
+  - Turns **ON** when `soilMoisture < 25%` (`PUMP_SOIL_ON`).
+  - Turns **OFF** when `soilMoisture ≥ 32%` (`PUMP_SOIL_OFF`).
+  - **Max Run & Cooldown**: Stops after `60 s` (`PUMP_MAX_RUN_MS`) and enforces a `120 s` cooldown (`PUMP_COOLDOWN_MS`).
+  - **Dry-Run / Fault Lockout**: If `3` consecutive timed-out runs fail to raise soil moisture by at least `+3%` (`PUMP_MIN_RISE`), `AUTO` mode locks out until soil moisture recovers to `≥ 32%` or manual intervention occurs.
+- **MANUAL Mode**:
+  - Controlled via `/toggle-pump`, `/set-mode`, or WebSocket commands.
+  - Automatically shuts off and latches after `5 minutes` (`PUMP_MANUAL_MAX_RUN_MS = 300000 ms`) to prevent flooding.
 
 ---
 
-### Pump Control
+### Wi-Fi, Captive Portal & Embedded Web Server
 
-The `task_pump` task runs every **100 ms** (`vTaskDelay(100 / portTICK_PERIOD_MS)`):
-
-**AUTO mode** (`pump_manual_control = false`):
-
-- Pump turns on when `soilMoisture < PUMP_SOIL_THRESHOLD` (= **5%**).
-- Pump turns off when `soilMoisture ≥ 5%`.
-
-**MANUAL mode** (`pump_manual_control = true`):
-
-- Pump state follows `pump_manual_state`, set via the `/toggle-pump` endpoint.
-
-When the pump state changes (`new_state ≠ last_reported_state`):
-
-1. Updates `global_pump_state` under `xMutexPumpControl`.
-2. Pushes a WebSocket message to all connected clients.
-3. Sets `dbTriggerSource = "pump"`, sets `g_pumpEventPending = true`, and signals `semDBUpdate` to log the event to PostgreSQL.
-
----
-
-### LittleFS
-
-The internal flash filesystem on the ESP32-S3, mounted at boot via `LittleFS.begin(true)`.
-
-| File                | Content                                                                                     |
-| ------------------- | ------------------------------------------------------------------------------------------- |
-| `/info.dat`       | JSON:`{"WIFI_SSID": "...", "WIFI_PASS": "...", "STA_IP": "..."}`                          |
-| `/wifi_list.json` | JSON array:`[{"ssid": "...", "pass": "...", "sta_ip": "..."}, ...]` — newest entry first |
-| `/dashboard.html` | Device Dashboard HTML                                                                       |
-| `/dashboard.css`  | Device Dashboard stylesheet                                                                 |
-| `/dashboard.js`   | Device Dashboard logic (WebSocket, Chart.js, Leaflet)                                       |
-
-**Structure of a single entry in `/wifi_list.json`:**
-
-```json
-{
-  "ssid": "NetworkName",
-  "pass": "password",
-  "sta_ip": "192.168.1.x"
-}
-```
-
-The `sta_ip` field is saved automatically when the device successfully connects to the corresponding network.
+- **Provisioning & Fallback**:
+  - Boots into **AP Mode** (SSID `ESP32_Config` by default, or `WIFI_AP_SSID` / `WIFI_AP_PASS` from `secrets.h`) with a captive DNS server (`192.168.4.1`) when no Wi-Fi credentials exist.
+  - If a saved STA network becomes unreachable across **3 consecutive failed retry cycles**, automatically falls back to **AP+STA** mode so local reconfiguration remains accessible while retrying STA every `15 s`.
+  - Synchronizes system clock via SNTP (`UTC+7`, `pool.ntp.org` / `time.nist.gov`) upon STA connection.
+- **Device Authentication (`requireDeviceAuth`)**:
+  - In **AP Mode**, WPA2 protects access so captive portal setup works seamlessly.
+  - In **STA Mode**, requests must present either:
+    1. A valid `iot_ticket` `HttpOnly` cookie exchanged from a backend-signed **HMAC-SHA256 ticket** (`GET /?ticket=...`, bound to `<MAC>:<LAN_IP>:<expiresAt_ms>`), or
+    2. HTTP Basic Auth matching `DEVICE_HTTP_USER` / `DEVICE_HTTP_PASS`.
+  - **WebSocket (`/ws`)** requires a one-time token from `GET /api/ws-token` sent in an initial `{"page":"auth","token":"..."}` frame; unauthenticated sockets receive no telemetry and cannot issue commands.
+- **Embedded HTTP Endpoints (`port 80`)**:
+  - `GET /` & `GET /dashboard.html` — Exchanges `?ticket=...` (if present) for an `HttpOnly` cookie and serves the Device Dashboard.
+  - `GET /api/status` — Returns `{"is_ap_mode": bool}`.
+  - `GET /api/ws-token` — Issues a 30-second one-time token for authenticating `/ws`.
+  - `GET /toggle-pump?state=ON|OFF` — Switches to `MANUAL` mode and sets/toggles pump state.
+  - `GET /set-mode?mode=AUTO|MANUAL` — Switches/toggles pump mode and logs the state transition.
+  - `GET /api/wifi-list` — Lists saved SSIDs from `/wifi_list.json` (passwords omitted).
+  - `POST /api/wifi-switch` — Queues live Wi-Fi network switching (`{ssid, pass}`).
+  - `GET /api/server-url` — Returns current `g_sensorApiUrl`.
+  - `/update` — ElegantOTA firmware/filesystem update UI (HTTP Basic Auth).
 
 ---
 
-### Factory Reset
+### LittleFS Storage & Factory Reset
 
-Hold the **BOOT button (GPIO0)** continuously for more than **2 seconds**:
+| LittleFS Path | Purpose |
+| :--- | :--- |
+| `/dashboard.html`, `/dashboard.css`, `/dashboard.js` | Embedded Device Dashboard static assets (protected from unauthenticated access; internal config files are blocked by static filter) |
+| `/info.dat` | Active Wi-Fi JSON (`WIFI_SSID`, `WIFI_PASS`, `STA_IP`) |
+| `/wifi_list.json` | Saved Wi-Fi history (`[{"ssid","pass","sta_ip"}, ...]`, newest first) |
+| `/server.json` | Optional runtime override `{"url": "https://..."}` for `SENSOR_API_URL` |
 
-- Deletes `/info.dat` from LittleFS.
-- Writes `{}` to `/wifi_info.json` on LittleFS (note: this targets `/wifi_info.json`, not `/wifi_list.json`).
-- Calls `ESP.restart()` → device reboots into AP Mode.
-
-> **Important:** Factory reset **does not delete `/wifi_list.json`**. All saved Wi-Fi networks remain intact after the reset. Only the current connection configuration (stored in `/info.dat`) is erased.
-
----
-
-## Node.js Backend
-
-Located in the `BE/` directory, running on **port 3000**.
-
-```bash
-cd BE
-npm ci
-npm start
-```
-
-### API Endpoints
-
-**Device data:**
-
-| Endpoint                                    | Method | Auth      | Description                                            |
-| ------------------------------------------- | ------ | --------- | ------------------------------------------------------ |
-| `/sensor`                                 | POST   | —        | ESP32 submits sensor data; INSERTs into`sensor_logs` |
-| `/admin/api/devices`                      | GET    | Logged in | Device list (most recent record per device)            |
-| `/admin/api/devices/:id/history?limit=60` | GET    | Logged in | Device history, up to 200 records                      |
-| `/admin/api/devices/:id`                  | DELETE | Admin     | Deletes all data for the device                        |
-
-**Device credentials:**
-
-| Endpoint                            | Method | Auth      | Description                                          |
-| ----------------------------------- | ------ | --------- | ---------------------------------------------------- |
-| `/admin/api/devices/:id/verify`   | POST   | Logged in | Verifies the device password (`{password}`)        |
-| `/admin/api/devices/:id/password` | POST   | Admin     | Sets or updates the device password (`{password}`) |
-
-**System accounts:**
-
-| Endpoint                 | Method   | Auth  | Description                                                        |
-| ------------------------ | -------- | ----- | ------------------------------------------------------------------ |
-| `/login`               | GET/POST | —    | Login page / login handler (rate-limited)                          |
-| `/register`            | POST     | —    | Disabled; accounts are created by an admin                         |
-| `/logout`              | POST     | —    | Destroys the session                                               |
-| `/api/me`              | GET      | —    | Returns`{loggedIn, username, role}`                              |
-| `/admin/api/users`     | GET      | Admin | Lists all system accounts                                          |
-| `/admin/api/users`     | POST     | Admin | Creates a new account (`{username, password, role}`)             |
-| `/admin/api/users/:id` | DELETE   | Admin | Deletes an account (cannot delete the currently logged-in account) |
+**Factory Reset (`BOOT_PIN = GPIO0` held `> 2 s`)**:
+- Deletes `/info.dat`, `/wifi_list.json`, and `/server.json` from LittleFS, then reboots into AP Mode.
 
 ---
 
-### PostgreSQL Database
+## Backend, Database & Edge Gateway
 
-**Database:** `iot_db` — **User / password:** from `.env` (`DB_USER`, `DB_PASS`)
+### Backend API Endpoints
 
-**`sensor_logs` table (13 columns):**
+Implemented in `services/backend/src/index.js` (Express 5, port `3000`):
 
-| Column             | Type               | Description                                                                     |
-| ------------------ | ------------------ | ------------------------------------------------------------------------------- |
-| `id`             | INTEGER (identity) | Auto-incrementing primary key                                                   |
-| `timestamp_real` | timestamptz          | Sensor measurement time (from NTP), NULL if not synchronized                    |
-| `timestamp_up`   | timestamptz NOT NULL | Time recorded by`gettimeofday()` immediately before sending the HTTP POST     |
-| `temperature`    | text               | Example:`"25.30°C"`                                                          |
-| `humidity`       | text               | Example:`"65.20%"`                                                            |
-| `soil_moisture`  | text               | Example:`"35%"` (formatted as `%02d%%`)                                     |
-| `PUMP_state`     | text               | `"ON"` or `"OFF"`                                                           |
-| `MODE_state`     | text               | `"AUTO"` or `"MANUAL"`                                                      |
-| `Message`        | text               | `"Normal"` / `"Warning"` / `"Critical"`                                   |
-| `Score`          | text               | `mlRollAcc` as a percentage, e.g. `"97.50%"` or `"100%"`                  |
-| `device_id`      | text               | LAN IP address of the ESP32 device                                              |
-| `latency`        | int                | End-to-end latency in**microseconds**: `timestamp_up − timestamp_real` |
-| `trigger_source` | text               | `"sensor"` or `"pump"`                                                      |
-
-**`device_credentials` table:** `device_id (PK)`, `password` — access password for each device.
-
-**`system_users` table:** `id`, `username (UNIQUE)`, `password`, `role CHECK('admin','user')`, `created_at`.
-
-**Database initialization:**
-
-```bash
-psql -U postgres -f DB/DB.sql
-psql -U postgres -d iot_db -f DB/auth_migration.sql
-```
-
-For an existing Docker volume, apply `DB/timezone_migration.sql` once with the
-backend stopped. If it still uses PostgreSQL 16, complete the backup/restore in
-[UPGRADE.md](UPGRADE.md) before using the Compose commands below. It interprets legacy sensor timestamps as `Asia/Ho_Chi_Minh`
-and legacy `system_users.created_at` as UTC (the previous database session
-timezone). Verify that assumption before migrating another installation.
-The Compose PostgreSQL command sets `Asia/Ho_Chi_Minh` for future writes,
-including ESP32 timestamps sent without an explicit offset.
-
-```bash
-docker compose stop backend
-docker compose up -d postgres
-docker compose exec -T postgres sh -c 'exec psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < DB/timezone_migration.sql
-# Only after the migration succeeds:
-docker compose up -d --build backend
-```
-
-**DB write debounce mechanism** (in `task_database.cpp`):
-
-- Minimum interval between two consecutive POSTs with the same trigger source: **200 ms**.
-- A `"sensor"` event is suppressed if `g_pumpEventPending = true` or if the most recent pump POST occurred less than 200 ms ago — **pump events always take priority**.
-- After sending a POST for a pump event, `g_pumpEventPending` is reset to `false`.
-
-**Timestamp update after each POST:**
-
-- `g_lastDBPostMs_pump` or `g_lastDBPostMs_sensor` is updated via `millis()` after the POST succeeds or fails.
-
-**Latency** = `gettimeofday()` at transmission time (in `task_database`) − `gettimeofday()` at sensor read time (in `temp_humi_monitor`), in **microseconds (µs)**.
+| Endpoint | Method | Auth | Description |
+| :--- | :---: | :---: | :--- |
+| `/healthz` | `GET` | — | Database connectivity health check (`200` / `503`) |
+| `/sensor` | `POST` | `X-Device-Key` | Validates and inserts ESP32 telemetry into `sensor_logs` |
+| `/login` | `GET` / `POST` | — | Login page & rate-limited session login (`express-session`) |
+| `/logout` | `POST` | — | Destroys active session |
+| `/api/me` | `GET` | — | Returns `{loggedIn, username, role}` |
+| `/admin/*` | `GET` | Logged in | Serves static Admin Dashboard (`admin.html`, `admin.css`, `admin.js`) |
+| `/admin/api/devices` | `GET` | Logged in | Latest record & online age per `(device_id, lan_ip)` filtered by RBAC |
+| `/admin/api/devices/:device_id` | `DELETE` | Admin | Deletes logs for a device (optionally scoped by `?lan_ip=...`) |
+| `/admin/api/devices/:device_id/ticket` | `POST` | Logged in | Verifies device password & returns a 5-minute HMAC ticket |
+| `/admin/api/devices/:device_id/has-password` | `GET` | Admin | Checks whether a device password is set |
+| `/admin/api/devices/:device_id/password` | `POST` / `DELETE` | Admin | Sets/updates or removes a device password (`bcrypt`) |
+| `/admin/api/devices/:device_id/access-request` | `POST` | User | Requests temporary admin approval for a passwordless device |
+| `/admin/api/access-requests` | `GET` | Admin | Lists pending temporary device access requests |
+| `/admin/api/access-requests/:id/status` | `GET` | User | Polls request decision and receives HMAC ticket upon approval |
+| `/admin/api/access-requests/:id/decision` | `POST` | Admin | Approves or denies a pending access request |
+| `/admin/api/users` | `GET` / `POST` | Admin | Lists system accounts or creates a new `admin` / `user` account |
+| `/admin/api/users/:id/devices` | `GET` / `PUT` | Admin | Reads or updates `(device_id, lan_ip)` access grants for a `user` |
 
 ---
 
-### Authentication and Authorization
+### PostgreSQL Schema & Migrations
 
-- **Session:** `express-session`, lifetime **8 hours**, `httpOnly` cookie, secret from `SESSION_SECRET`.
-- **First admin:** created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` when `system_users` is empty. Additional users are created by an admin.
-- **Passwords** are stored with bcrypt. Legacy plaintext values are rehashed on the next successful login.
-
-**Authorization matrix:**
-
-| Feature                          | Admin                     | User                              |
-| -------------------------------- | ------------------------- | --------------------------------- |
-| View device list                 | ✅                        | ✅                                |
-| View device history              | ✅                        | ✅                                |
-| Access Device Dashboard directly | ✅ (no password required) | ✅ (device password required)     |
-| Device has no password set       | ✅ Can set a new password | ✅ Direct access without password |
-| Delete device                    | ✅                        | ❌                                |
-| Set device password              | ✅                        | ❌                                |
-| Manage system accounts           | ✅                        | ❌                                |
-| Select and bulk-delete devices   | ✅                        | ❌                                |
-
-**Session timeout on Device Dashboard:** Users are redirected back after **5 minutes** (tracked via the URL parameter `?session_start=HH:MM:SS`).
+Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
+- **`sensor_logs`** (`database/schema/base.sql`): Stores `id`, `timestamp_real`, `timestamp_up`, `received_at`, numeric `temperature`, `humidity`, `soil_moisture`, `"PUMP_state"`, `"MODE_state"`, `"Message"`, `"Score"`, `device_id` (MAC), `lan_ip`, `latency` (µs), and `trigger_source` (`sensor` | `pump`). Rows older than `SENSOR_RETENTION_DAYS` (default `90`, `0` disables) are purged automatically every 6 hours.
+- **`device_credentials`** (`database/schema/base.sql`): Stores per-device `bcrypt` password hashes (`device_id` PK).
+- **`system_users` & `user_devices`** (`database/migrations/001_auth.sql`): Stores `admin`/`user` accounts and per-user `(device_id, lan_ip)` permissions.
+- **`session`** (`database/migrations/003_session_login_at.sql`): Persistent PostgreSQL session store (`connect-pg-simple`) with `login_at` timestamp.
+- **`display.*` views** (`database/migrations/004_time_display_views.sql`): Read-only views formatting all timestamps as `YYYY-MM-DD HH24:MI:SS` in `Asia/Ho_Chi_Minh`.
+- **`002_timezone.sql`**: Standalone migration helper for upgrading legacy `timestamp without time zone` installations.
 
 ---
 
-## Frontend
+### Authentication, RBAC & HMAC Device Tickets
 
-### Device Dashboard (embedded on ESP32)
-
-Served from LittleFS at `http://<device_ip>/`. Source code in `FE/`.
-
-**Features:**
-
-- Displays temperature, air humidity, and soil moisture in real time via WebSocket.
-- Sensor value colors map exactly to risk thresholds from `risk_label.h`: Normal (green), Warning (orange), Critical (red).
-- Special case: displays `"100%"` when `humidity ≥ 99.95`.
-- Historical line chart (Chart.js, up to 60 data points, 5 s or 15 s interval — user-selectable).
-- Location map (Leaflet + OpenStreetMap) with default coordinates (12.6951778, 108.057041).
-- Pump status badge (ON/OFF) and mode badge (AUTO/MANUAL) with Toggle buttons.
-- Composite environment status notification derived from `lcd_state`.
-- Wi-Fi configuration modal (sends via WebSocket or `/api/wifi-switch`).
-- "The device is in AP Mode" overlay when `/api/status` reports `is_ap_mode: true`.
-- WebSocket **automatically reconnects after 2 seconds** on connection loss.
-- Fallback canvas chart when Chart.js cannot be loaded (offline mode).
-
-### Admin Dashboard (Node.js)
-
-Served at `http://<server>:3000/admin`. Source code in `BE/admin_static/`.
-
-**Features:**
-
-- Displays a card grid; each card represents one device, auto-refreshed every **5 seconds** (polling `/admin/api/devices`).
-- Each card establishes a **direct WebSocket connection** to `ws://<device_id>/ws` for real-time data.
-- **Online/Offline detection mechanism:**
-  - After `STALE_DIFF_MS = 10,000 ms` with no new data → a countdown begins.
-  - After an additional `COUNTDOWN_SECONDS = 5 seconds` → transitions to Offline state.
-  - The Offline state displays the time elapsed since going offline, rounded down to the nearest **multiple of 30 seconds**.
-- Sensor value colors map exactly to the thresholds defined in `risk_label.h`.
-- **Admin:** card selection checkboxes, action bar, bulk device deletion.
-- **User:** all selection/deletion features are hidden; device password must be entered before accessing the Device Dashboard.
-- Real-time clock and summary statistics (total / online / offline).
+- **Password Security**: All user and device passwords use `bcryptjs` (cost `10`), with constant-time `SENSOR_API_KEY` verification (`crypto.timingSafeEqual`) and login brute-force rate limiting.
+- **Role-Based Access Control**:
+  - **`admin`**: Full visibility across all devices, bulk log deletion, device password management, user creation, `(device_id, lan_ip)` grant assignment, and approval of passwordless access requests.
+  - **`user`**: Views only devices explicitly granted in `user_devices`; opens a local Device Dashboard either by entering the device password (receiving a 5-minute HMAC ticket) or by requesting real-time admin approval when no device password is set.
 
 ---
 
-## ML Pipeline
+### Cloudflare Tunnel & Worker Gateway
 
-The script `ml/train_export.py` executes the full pipeline:
+- **`cloudflared`** (`docker-compose.yml`) exposes the internal `backend:3000` container securely to Cloudflare without opening inbound host ports.
+- **`services/gateway`** is a Cloudflare Worker (`iot-env-monitor-sys`) bound to the tunnel's VPC Service (`env.IOT_BACKEND`), forwarding HTTPS requests with `X-Forwarded-Proto` and `X-Forwarded-Host` headers so secure cookies and ESP32 HTTPS `POST /sensor` telemetry work seamlessly over the public domain.
+
+---
+
+## Dashboards
+
+### Embedded Device Dashboard
+Located in `firmware/data/` and served directly by the ESP32-S3:
+- Real-time temperature, humidity, soil moisture, composite status banner, and live Chart.js history (`5s` / `15s` intervals, with offline canvas fallback).
+- Instant `ON`/`OFF` and `AUTO`/`MANUAL` pump controls synchronized via WebSocket.
+- Settings modal for switching/adding Wi-Fi networks and updating the backend `SENSOR_API_URL` (`/server.json`).
+
+### Central Admin Dashboard
+Located in `services/backend/public/admin/`:
+- Polls `/admin/api/devices` every `5 s` to display multi-device telemetry cards, live online/countdown/offline indicators, and summary counters.
+- Provides modals for device password verification/management, real-time access-request approval notifications, account creation, and granular per-LAN-IP device permission assignment.
+
+---
+
+## TinyML Training Pipeline
+
+Requires **Python 3.12+**:
 
 ```bash
 python3.12 -m venv .venv
 source .venv/bin/activate
-python -m pip install -r ml/requirements.txt
+pip install -r ml/requirements.txt
 python ml/train_export.py
 ```
 
-**Steps:**
-
-1. **Dataset generation** (`build_dataset`):
-
-   - Grid scan with `np.linspace`: T∈[5,50]°C × H∈[20,100]% × S∈[0,100]% (20×20×20×2 = 16,000 Gaussian-noised samples).
-   - 5,000 uniformly distributed random samples.
-   - Total: **21,000 rows** (consistent with `dataset.csv`).
-   - Labels assigned automatically by `final_label()` — synchronized with `risk_label.h`.
-   - Output written to `ml/dataset.csv`.
-2. **Training:**
-
-   - Split: 85% train / 15% validation.
-   - Optimizer: Adam (lr=0.002), batch size=64, max epochs=80.
-   - EarlyStopping: monitors `val_accuracy`, patience=15, restores best weights.
-3. **Model export:**
-
-   - TFLite float32, no quantization (`converter.optimizations = []`) → `ml/dht_risk_model.tflite`.
-   - Converted to a C byte array → `include/dht_anomaly_model.h` for embedding into the firmware.
-
-**Outputs:**
-
-- `ml/dataset.csv` — training dataset.
-- `ml/dht_risk_model.tflite` — TFLite model file.
-- `include/dht_anomaly_model.h` — model pre-embedded in the firmware.
+`ml/train_export.py`:
+1. Generates `21,000` labeled samples (`16,000` boundary-grid noisy samples + `5,000` uniform random samples) aligned with `risk_policy.h` → `ml/data/dataset.csv`.
+2. Trains `Input(3) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)` with early stopping.
+3. Converts to unquantized float32 TFLite, verifies schema v3 operator compatibility (`FULLY_CONNECTED` v1, `SOFTMAX` v1) and numerical equivalence, and writes both `ml/models/dht_risk_model.tflite` and `firmware/include/dht_risk_model.h`.
 
 ---
 
-## Utility Scripts
+## Device Utility Tools
 
-### `scripts/pull_wifi_info.py`
-
-Reads the contents of `/wifi_list.json` from the ESP32 flash and saves it to the host machine at `data/wifi_info.json`. It also reads `/info.dat` to retrieve the current IP address (`STA_IP`) and the connected SSID, then updates the `sta_ip` field for the matching SSID in the output list.
-
-**Installation:**
+`tools/device/pull_wifi_info.py` dumps the ESP32-S3 LittleFS partition (`0x670000`, size `0x180000` on `default_8MB.csv`) via `esptool`, mounts it with `littlefs-python`, and prints `/info.dat` + `/wifi_list.json` (or exports merged JSON via `--out`):
 
 ```bash
-pip install esptool littlefs-python
+pip install -r tools/device/requirements.txt
+python tools/device/pull_wifi_info.py --port /dev/ttyACM0
 ```
-
-**First run** (to determine the LittleFS partition offset and size):
-
-```bash
-# Find the default_8MB.csv file in PlatformIO (PowerShell):
-Get-ChildItem -Path "$env:USERPROFILE\.platformio" -Recurse -Filter "default_8MB.csv" | Select-Object FullName
-
-# Run with the LittleFS partition offset/size:
-python scripts/pull_wifi_info.py --port COM7 --offset 0x670000 --size 0x180000
-```
-
-**Subsequent runs** (after the default configuration has been confirmed):
-
-```bash
-python scripts/pull_wifi_info.py --port COM7
-```
-
-### `scripts/split_libs.ps1`
-
-A PowerShell utility that splits the `lib/` directory into `lib_used/` (libraries currently in use) and `lib_unused/` (unused libraries) to reduce the tree size during builds. See `scripts/README_split_libs.md` for details.
 
 ---
 
-## Installation and Deployment
+## Installation & Deployment
 
-### 1. ESP32-S3 Firmware
-
-**Requirements:** PlatformIO IDE or CLI.
-
-```bash
-# Build and flash firmware
-pio run --target upload
-
-# Upload filesystem (Dashboard files to LittleFS)
-# Note: data_dir = FE; only the contents of FE/ are uploaded
-pio run --target uploadfs
-
-# Open Serial Monitor (115200 baud)
-pio device monitor
-```
-
-> **Note:** To load the Wi-Fi list onto the device, copy `data/wifi_info.json` into `FE/` as `wifi_list.json` before running `uploadfs`.
-
-### 2. Retraining the TinyML Model (optional)
-
-```bash
-python3.12 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r ml/requirements.txt
-python ml/train_export.py
-# Then rebuild and re-flash the firmware to embed the new model
-pio run --target upload
-```
-
-### 3. Node.js Backend
-
-**Requirements:** Node.js 26.12.x, npm 12.2.x, PostgreSQL 18.6 (existing PostgreSQL 16 installations must follow [UPGRADE.md](UPGRADE.md)).
+### 1. Configure Secrets
 
 ```bash
 cp .env.example .env
-# Edit .env: DB_PASS, SESSION_SECRET, SENSOR_API_KEY, ADMIN_PASSWORD
-
-# Initialize the database (create DB_USER yourself; do not commit passwords)
-psql -U postgres -f DB/DB.sql
-psql -U postgres -d iot_db -f DB/auth_migration.sql
-
-# Install dependencies and start
-cd BE
-npm ci
-npm start
-# Server running at http://localhost:3000
+cp firmware/include/secrets.h.example firmware/include/secrets.h
 ```
 
-### 4. Access URLs
+Fill in strong values in `.env` (`DB_PASS`, `SESSION_SECRET`, `SENSOR_API_KEY`, `ADMIN_PASSWORD`, `CLOUDFLARE_TUNNEL_TOKEN`) and matching `SENSOR_API_KEY`, `SENSOR_API_URL`, and `DEVICE_HTTP_PASS` in `firmware/include/secrets.h`. Both files are excluded by `.gitignore`.
 
-| URL                            | Description                               |
-| ------------------------------ | ----------------------------------------- |
-| `http://<device_ip>/`        | Device Dashboard (served from ESP32)      |
-| `http://<device_ip>/update`  | ElegantOTA — firmware update via browser |
-| `http://<server>:3000/login` | Admin login page                          |
-| `http://<server>:3000/admin` | Admin Dashboard                           |
+### 2. Start Backend, PostgreSQL & Tunnel (Docker Compose)
 
-### 5. Initial Wi-Fi Configuration for the Device
+```bash
+docker compose up -d --build
+```
 
-1. Power on the ESP32 when no `/info.dat` exists → device broadcasts AP Mode (`ESP32 LOCAL`).
-2. Connect a computer or phone to the AP Wi-Fi (password: `12345678`).
-3. Open a browser → navigate to the Dashboard → Settings → enter SSID/Password → Save & Connect.
-4. The device saves the credentials and restarts in STA Mode.
+On first initialization, PostgreSQL automatically runs `base.sql`, `001_auth.sql`, `003_session_login_at.sql`, and `004_time_display_views.sql`, and the backend seeds the initial admin account from `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
 
----
+### 3. Deploy Cloudflare Worker Gateway (Optional)
 
-## Security Notes
+```bash
+cd services/gateway
+npm ci
+npm run deploy
+```
 
-> Copy `.env.example` to `.env` and `include/secrets.h.example` to `include/secrets.h`. Do not commit real passwords, `SESSION_SECRET`, or `data/wifi_info.json`.
+### 4. Build & Flash ESP32-S3 Firmware (PlatformIO)
 
-> System and device passwords are stored with **bcrypt**. Existing plaintext hashes are upgraded on the next successful login. The first admin is created from `ADMIN_USERNAME` / `ADMIN_PASSWORD` when `system_users` is empty.
+```bash
+# Compile and flash firmware
+pio run -e yolo_uno --target upload
 
-> `POST /sensor` requires header `X-Device-Key` matching `SENSOR_API_KEY`. ESP32 HTTP/WebSocket/OTA endpoints use HTTP Basic Auth from `DEVICE_HTTP_USER` / `DEVICE_HTTP_PASS`.
+# Build and flash LittleFS web assets (firmware/data/)
+pio run -e yolo_uno --target uploadfs
 
-> Public `/register` is disabled. Login is rate-limited. `POST /sensor` rejects unsafe `device_id` values.
-
-> ℹ️ **The `latency` column** in `sensor_logs` stores values in **microseconds (µs)**, not milliseconds.
-
-> ℹ️ **Backend target URL:** The ESP32 sends sensor telemetry to `SENSOR_API_URL` (configured in `include/secrets.h` or overridden by `/server.json` via the web dashboard settings). Ensure the backend is reachable via this URL.
-
-> ℹ️ **Factory reset** only deletes `/info.dat` and writes `{}` to `/wifi_info.json`. The Wi-Fi list in `/wifi_list.json` is **not deleted** by a factory reset.
+# Monitor serial output (115200 baud)
+pio device monitor
+```
 
 ---
 
-## Libraries Used
+## Libraries & Runtime Versions
 
-**Firmware (PlatformIO — `platformio.ini`):**
-
-- `ESPAsyncWebServer` (`ESP32Async/ESPAsyncWebServer@3.12.1`) — asynchronous web server
-- `TensorFlowLite_ESP32` (`tanakamasayuki/TensorFlowLite_ESP32@1.0.0`) — TensorFlow Lite Micro
-- `Adafruit NeoPixel` (`adafruit/Adafruit NeoPixel@1.15.5`) — WS2812B LED control
-- `DHT20@0.3.3` — temperature/humidity sensor driver
-- `LiquidCrystal_I2C` — I2C LCD display driver
-- `ArduinoJson@7.4.3` — JSON read/write (LittleFS, WebSocket)
-- `ElegantOTA@4.0.0` — over-the-air firmware updates via browser
-
-**Backend (`BE/package.json`):**
-
-- `express@^5.3.0` — REST framework
-- `express-session@^1.19.0` — session management
-- `pg@^8.23.1` — PostgreSQL client
-- `bcryptjs` — password hashing
-
-**Frontend (CDN):**
-
-- `Chart.js@4.5.1` — historical sensor line chart
-- `Leaflet@1.9.4` + OpenStreetMap — location map
+- **Firmware (`platformio.ini`, `espressif32@7.1.3`)**:
+  - `tanakamasayuki/TensorFlowLite_ESP32@1.0.0`
+  - `ESP32Async/ESPAsyncWebServer@3.12.1`
+  - `bblanchon/ArduinoJson@7.4.3`
+  - `ayushsharma82/ElegantOTA@4.0.0`
+  - `adafruit/Adafruit NeoPixel@1.15.5`
+  - `robtillaart/DHT20@0.3.3`
+  - `LiquidCrystal_I2C` (`firmware/lib/lcd_i2c`)
+- **Backend (`services/backend`, Node.js `26.12.0`, PostgreSQL `18.6`)**:
+  - `express@^5.3.0`, `express-session@^1.19.0`, `connect-pg-simple@^10.0.0`, `pg@^8.23.1`, `bcryptjs@^3.0.4`
+- **Gateway (`services/gateway`)**:
+  - `wrangler@^4.86.0`
+- **ML Pipeline (`ml/requirements.txt`, Python `3.12`)**:
+  - `numpy==2.5.4`, `tensorflow==2.21.0`

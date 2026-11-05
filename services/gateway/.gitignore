@@ -1,9 +1,7 @@
-# Installed dependencies and local build/test output
+# Installed dependencies and local build output
 node_modules/
 .wrangler/
 dist/
-coverage/
-.vitest/
 .cache/
 
 # Logs and diagnostic reports

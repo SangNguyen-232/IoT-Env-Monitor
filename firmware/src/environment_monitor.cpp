@@ -3,6 +3,7 @@
 #include "web_server.h"
 #include "shared_context.h"
 #include <Arduino.h>
+#include <WiFi.h>
 #include <Wire.h>
 #include <DHT20.h>
 #include <LiquidCrystal_I2C.h>
@@ -10,16 +11,19 @@
 
 #define SOIL_PIN 2
 
-DHT20 dht20;
-LiquidCrystal_I2C lcd(0x27, 16, 2);
+static DHT20 dht20;
+static LiquidCrystal_I2C lcd(0x27, 16, 2);
 
-static const char* statusText(int state) {
+static const char *statusText(int state)
+{
     if (state == 3) return "Critical";
     if (state == 2) return "Warning";
     return "Normal";
 }
 
-void temp_humi_monitor(void *pvParameters) {
+void temp_humi_monitor(void *pvParameters)
+{
+    SharedContext *ctx = static_cast<SharedContext *>(pvParameters);
 
     Wire.begin(11, 12);
     dht20.begin();
@@ -38,23 +42,22 @@ void temp_humi_monitor(void *pvParameters) {
         float temperature = dht20.getTemperature();
         float humidity = dht20.getHumidity();
 
-        int raw_soil = analogRead(SOIL_PIN);
-        int soil_moisture = map(raw_soil, 0, 4095, 0, 100);
+        const int raw_soil = analogRead(SOIL_PIN);
+        const int soil_moisture = map(raw_soil, 0, 4095, 0, 100);
 
         const bool dht_ok = dht_status == DHT20_OK && isfinite(temperature) && isfinite(humidity)
                             && humidity >= 0.0f && humidity <= 100.0f;
         if (!dht_ok) {
-            temperature = humidity = -1;
+            temperature = humidity = -1.0f;
         }
 
-        if (pvParameters != NULL) {
-            SharedContext* ctx = (SharedContext*)pvParameters;
+        int capturedLcdState = 1;
+        if (ctx != nullptr) {
             xSemaphoreTake(ctx->mutexContext, portMAX_DELAY);
 
             ctx->temperature = temperature;
             ctx->humidity = humidity;
             ctx->soilMoisture = soil_moisture;
-            ctx->soilRaw = raw_soil;
             // ADC rails may indicate a disconnected/shorted sensor. AUTO fails closed.
             ctx->soilSampleValid = raw_soil > 0 && raw_soil < 4095;
             ctx->soilSampledAtMs = millis();
@@ -85,11 +88,9 @@ void temp_humi_monitor(void *pvParameters) {
                     xSemaphoreGive(ctx->semNeoUpdate);
                 }
 
-                const int newLcdState = risk_final_safety_label(temperature, humidity, (float)soil_moisture);
-                if (newLcdState != ctx->lcdState) {
-                    ctx->lcdState = newLcdState;
-                }
+                ctx->lcdState = risk_final_safety_label(temperature, humidity, static_cast<float>(soil_moisture));
             }
+            capturedLcdState = ctx->lcdState;
 
             xSemaphoreGive(ctx->mutexContext);
             xSemaphoreGive(ctx->semDBUpdate);
@@ -99,34 +100,22 @@ void temp_humi_monitor(void *pvParameters) {
         if (!dht_ok) {
             lcd.print("T:--.-C H:--.-% ");
         } else {
-            lcd.print("T:");
-            lcd.print(temperature, 1);
-            lcd.print((char)223);
-            lcd.print("C H:");
-            if (humidity >= 99.95) {
-                lcd.print("100% ");
+            char row0[17];
+            if (humidity >= 99.95f) {
+                snprintf(row0, sizeof(row0), "T:%.1f%cC H:100%%", temperature, static_cast<char>(223));
             } else {
-                lcd.print(humidity, 1);
-                lcd.print("%");
+                snprintf(row0, sizeof(row0), "T:%.1f%cC H:%.1f%%", temperature, static_cast<char>(223), humidity);
             }
+            size_t len = strlen(row0);
+            while (len < 16) row0[len++] = ' ';
+            row0[16] = '\0';
+            lcd.print(row0);
         }
 
+        char row1[17];
+        snprintf(row1, sizeof(row1), "SM:%02d%%  %-8s", soil_moisture, statusText(capturedLcdState));
         lcd.setCursor(0, 1);
-        char buffer[8];
-        snprintf(buffer, sizeof(buffer), "SM:%02d%%   ", soil_moisture);
-        lcd.print(buffer);
-
-        int capturedLcdState = 1;
-        if (pvParameters != NULL) {
-            SharedContext* ctx = (SharedContext*)pvParameters;
-            xSemaphoreTake(ctx->mutexContext, portMAX_DELAY);
-            capturedLcdState = ctx->lcdState;
-            xSemaphoreGive(ctx->mutexContext);
-            lcd.setCursor(8, 1);
-            lcd.print("        ");
-            lcd.setCursor(8, 1);
-            lcd.print(statusText(capturedLcdState));
-        }
+        lcd.print(row1);
 
         String wsPayload = "{";
         if (dht_ok) {

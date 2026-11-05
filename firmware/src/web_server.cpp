@@ -1,5 +1,11 @@
 #include "web_server.h"
 #include <WiFi.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncTCP.h>
+#include <AsyncJson.h>
+#include <ArduinoJson.h>
+#include <ElegantOTA.h>
+#include "LittleFS.h"
 #include <esp_system.h>
 #include <mbedtls/md.h>
 #include <mbedtls/base64.h>
@@ -9,41 +15,30 @@
 #include <time.h>
 #include <vector>
 #include "pump.h"
-#include "shared_context.h"
 #include "device_config.h"
+#include "message_handler.h"
 #include "secrets.h"
 #include "input_safety.h"
-#include <AsyncJson.h>
 
-#ifndef OTA_HTTP_USER
-#define OTA_HTTP_USER DEVICE_HTTP_USER
-#endif
-#ifndef OTA_HTTP_PASS
-#define OTA_HTTP_PASS DEVICE_HTTP_PASS
-#endif
- 
 static bool isAPMode()
 {
     return (WiFi.getMode() == WIFI_AP) || (WiFi.getMode() == WIFI_AP_STA && WiFi.status() != WL_CONNECTED);
 }
- 
+
 // Verify an HMAC-SHA256 ticket issued by the backend.
 // The ticket is a Base64URL-encoded JSON object containing payload and sig.
 // payload = "<device_id>:<lan_ip>:<expiresAt_ms>"
 // sig = HMAC-SHA256(SENSOR_API_KEY, payload) hex
 static bool verifyTicket(const String &ticketB64, long long *validUntilMs = nullptr)
 {
-    // Bound the input size to prevent excessive memory allocation on ESP32.
     if (ticketB64.isEmpty() || ticketB64.length() > 1400) return false;
 
-    // Convert Base64URL to standard Base64.
     String b64 = ticketB64;
     b64.replace('-', '+');
     b64.replace('_', '/');
     if (b64.length() % 4 == 1) return false;
     while (b64.length() % 4 != 0) b64 += '=';
 
-    // Use the Mbed TLS API bundled with the ESP32 framework instead of base64::decode.
     std::vector<unsigned char> decodedBuf((b64.length() * 3) / 4 + 1);
     size_t decodedLen = 0;
     int ret = mbedtls_base64_decode(
@@ -56,7 +51,6 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
     if (ret != 0 || decodedLen == 0) return false;
     decodedBuf[decodedLen] = '\0';
 
-    // Parse JSON with the JSON library rather than extracting fields with string operations.
     JsonDocument doc;
     if (deserializeJson(doc, reinterpret_cast<const char *>(decodedBuf.data()), decodedLen)
             != DeserializationError::Ok) return false;
@@ -79,14 +73,12 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
     if (errno == ERANGE || endPtr == expiresText.c_str() ||
         endPtr == nullptr || *endPtr != '\0' || expiresAtMs <= 0) return false;
 
-    // Reject tickets before time synchronization; without a trusted clock,
-    // ESP32 cannot determine whether a ticket has expired.
+    // Reject tickets before SNTP synchronization.
     const time_t nowSec = time(nullptr);
-    if (nowSec < static_cast<time_t>(1577836800)) return false; // 2020-01-01 UTC
+    if (nowSec < static_cast<time_t>(1577836800)) return false;
     const long long nowMs = static_cast<long long>(nowSec) * 1000LL;
     if (nowMs >= expiresAtMs) return false;
 
-    // Verify HMAC-SHA256 using the key shared by ESP32 and the backend.
     const char *key = SENSOR_API_KEY;
     if (key == nullptr || key[0] == '\0') return false;
 
@@ -115,7 +107,6 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
     }
     expected[64] = '\0';
 
-    // Accept only 64-character hexadecimal signatures and compare without early exit.
     uint8_t diff = 0;
     for (int i = 0; i < 64; ++i) {
         diff |= static_cast<uint8_t>(expected[i] ^ sigHex[i]);
@@ -128,8 +119,7 @@ static bool verifyTicket(const String &ticketB64, long long *validUntilMs = null
 static bool requireDeviceAuth(AsyncWebServerRequest *request, uint32_t *maxWsSessionMs = nullptr)
 {
     if (maxWsSessionMs != nullptr) *maxWsSessionMs = 300000U;
-    // In AP mode, the Wi-Fi network is protected by the AP password (WPA2).
-    // Skip Basic Auth so Apple Captive Assistant on iPhone can display the setup page.
+    // In AP mode, access is protected by WPA2 so captive portal assistants can open setup.
     if (isAPMode()) return true;
 
     if (request->hasHeader("Cookie")) {
@@ -152,24 +142,22 @@ static bool requireDeviceAuth(AsyncWebServerRequest *request, uint32_t *maxWsSes
             start = end + 1;
         }
     }
- 
-    if (!request->authenticate(DEVICE_HTTP_USER, DEVICE_HTTP_PASS))
-    {
+
+    if (!request->authenticate(DEVICE_HTTP_USER, DEVICE_HTTP_PASS)) {
         request->requestAuthentication();
         return false;
     }
     return true;
 }
- 
-AsyncWebServer server(80);
-AsyncWebSocket ws("/ws");
- 
-bool webserver_isrunning = false;
- 
-String global_pump_state = "OFF"; 
-String global_pump_mode = "AUTO"; 
- 
-static SharedContext* s_ctx = nullptr;
+
+static AsyncWebServer server(80);
+static AsyncWebSocket ws("/ws");
+static bool webserver_isrunning = false;
+
+String global_pump_state = "OFF";
+String global_pump_mode = "AUTO";
+
+static SharedContext *s_ctx = nullptr;
 
 static String s_wsToken = "";
 static unsigned long s_wsTokenUntil = 0;
@@ -200,20 +188,19 @@ static void wsSetAuth(uint32_t id, bool on)
     }
     portEXIT_CRITICAL(&s_wsAuthMux);
 }
- 
-void Webserver_init_ctx(SharedContext* ctx)
+
+void Webserver_init_ctx(SharedContext *ctx)
 {
     s_ctx = ctx;
 }
- 
+
 void Webserver_sendata(String data)
 {
     uint32_t ids[8];
     portENTER_CRITICAL(&s_wsAuthMux);
     memcpy(ids, s_wsAuthIds, sizeof(ids));
     portEXIT_CRITICAL(&s_wsAuthMux);
-    // Send by ID through the library's locked API; never iterate its client list
-    // from a sensor/control task while AsyncTCP can add/remove clients.
+    // Send by ID through the library's locked API rather than iterating the client list directly.
     for (uint32_t id : ids) {
         if (id == 0) continue;
         if (wsIsAuth(id)) ws.text(id, data);
@@ -223,23 +210,18 @@ void Webserver_sendata(String data)
         }
     }
 }
- 
-void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
+
+static void onEvent(AsyncWebSocket *wsServer, AsyncWebSocketClient *client, AwsEventType type, void *arg, uint8_t *data, size_t len)
 {
-    if (type == WS_EVT_CONNECT)
-    {
+    (void)wsServer;
+    if (type == WS_EVT_CONNECT) {
         Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
- 
-    }
-    else if (type == WS_EVT_DISCONNECT)
-    {
+    } else if (type == WS_EVT_DISCONNECT) {
         wsSetAuth(client->id(), false);
         Serial.printf("WebSocket client #%u disconnected\n", client->id());
-    }
-    else if (type == WS_EVT_DATA)
-    {
-        AwsFrameInfo *info = (AwsFrameInfo *)arg;
- 
+    } else if (type == WS_EVT_DATA) {
+        AwsFrameInfo *info = static_cast<AwsFrameInfo *>(arg);
+
         if (info != nullptr && info->opcode == WS_TEXT &&
             websocket_frame_is_complete(info->final, info->index, info->len, len))
         {
@@ -249,11 +231,9 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
             JsonDocument hdr;
             if (deserializeJson(hdr, message) != DeserializationError::Ok) return;
             String page = hdr["page"] | String("");
-            if (page == "auth")
-            {
+            if (page == "auth") {
                 String tk = hdr["token"] | String("");
-                if (!s_wsToken.isEmpty() && tk == s_wsToken && (long)(millis() - s_wsTokenUntil) < 0)
-                {
+                if (!s_wsToken.isEmpty() && tk == s_wsToken && static_cast<long>(millis() - s_wsTokenUntil) < 0) {
                     wsSetAuth(client->id(), true);
                     s_wsToken = "";
                     if (wsIsAuth(client->id()) && xSemaphoreTake(xMutexPumpControl, pdMS_TO_TICKS(200)) == pdTRUE) {
@@ -269,12 +249,12 @@ void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType 
         }
     }
 }
- 
-void connnectWSV()
+
+static void startWebServer()
 {
     ws.onEvent(onEvent);
     server.addHandler(&ws);
- 
+
     // Exchange the short-lived backend ticket for an HttpOnly LAN session cookie.
     server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (request->hasParam("ticket")) {
@@ -295,7 +275,6 @@ void connnectWSV()
         request->send(LittleFS, "/dashboard.html", "text/html");
     });
 
-    // Direct dashboard access uses the same Basic Auth / validated ticket cookie.
     server.on("/dashboard.html", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         request->send(LittleFS, "/dashboard.html", "text/html");
@@ -309,15 +288,13 @@ void connnectWSV()
             return !(u == "/dashboard.html" ||
                      u.indexOf("info.dat") >= 0 ||
                      u.indexOf("wifi_list.json") >= 0 ||
-                     u.indexOf("wifi_info.json") >= 0 ||
                      u.indexOf("server.json") >= 0);
         });
- 
+
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
-        bool is_ap_mode = (WiFi.getMode() == WIFI_AP) || (WiFi.getMode() == WIFI_AP_STA && WiFi.status() != WL_CONNECTED);
-        String json = "{\"mqtt_connected\": false, \"is_ap_mode\": " + String(is_ap_mode ? "true" : "false") + "}"; 
-        request->send(200, "application/json", json);
+        request->send(200, "application/json",
+                      String("{\"is_ap_mode\":") + (isAPMode() ? "true" : "false") + "}");
     });
 
     server.on("/api/ws-token", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -325,14 +302,14 @@ void connnectWSV()
         if (!requireDeviceAuth(request, &sessionDurationMs)) return;
         char buf[33];
         snprintf(buf, sizeof(buf), "%08x%08x%08x%08x",
-                 (unsigned)esp_random(), (unsigned)esp_random(),
-                 (unsigned)esp_random(), (unsigned)esp_random());
+                 static_cast<unsigned>(esp_random()), static_cast<unsigned>(esp_random()),
+                 static_cast<unsigned>(esp_random()), static_cast<unsigned>(esp_random()));
         s_wsToken = String(buf);
         s_wsTokenUntil = millis() + 30000UL;
         s_wsSessionUntil = millis() + sessionDurationMs;
         request->send(200, "application/json", "{\"token\":\"" + s_wsToken + "\"}");
     });
- 
+
     server.on("/toggle-pump", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         String temp_state;
@@ -345,7 +322,7 @@ void connnectWSV()
                 return;
             }
         }
- 
+
         String current_state, current_mode;
         if (xSemaphoreTake(xMutexPumpControl, portMAX_DELAY) == pdTRUE) {
             if (has_param) {
@@ -353,23 +330,20 @@ void connnectWSV()
             } else {
                 global_pump_state = (global_pump_state == "ON") ? "OFF" : "ON";
             }
-            
+
             global_pump_mode = "MANUAL";
             pump_manual_control = true;
             pump_manual_state = (global_pump_state == "ON");
- 
+
             current_state = global_pump_state;
             current_mode = global_pump_mode;
             xSemaphoreGive(xMutexPumpControl);
         }
- 
+
         Webserver_sendata("{\"pump_state\":\"" + current_state + "\",\"pump_mode\":\"" + current_mode + "\"}");
- 
-        if (s_ctx != nullptr) xSemaphoreGive(s_ctx->semDBUpdate);
- 
         request->send(200, "text/plain", current_state);
     });
- 
+
     server.on("/set-mode", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         String temp_mode;
@@ -382,7 +356,7 @@ void connnectWSV()
                 return;
             }
         }
- 
+
         String current_state, current_mode;
         if (xSemaphoreTake(xMutexPumpControl, portMAX_DELAY) == pdTRUE) {
             if (has_param) {
@@ -390,24 +364,32 @@ void connnectWSV()
             } else {
                 global_pump_mode = (global_pump_mode == "MANUAL") ? "AUTO" : "MANUAL";
             }
- 
+
             pump_manual_control = (global_pump_mode == "MANUAL");
             if (pump_manual_control) {
                 pump_manual_state = (global_pump_state == "ON");
             }
- 
+
             current_state = global_pump_state;
             current_mode = global_pump_mode;
             xSemaphoreGive(xMutexPumpControl);
         }
- 
+
         Webserver_sendata("{\"pump_state\":\"" + current_state + "\",\"pump_mode\":\"" + current_mode + "\"}");
- 
-        if (s_ctx != nullptr) xSemaphoreGive(s_ctx->semDBUpdate);
- 
+
+        if (s_ctx != nullptr) {
+            if (xSemaphoreTake(s_ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE) {
+                strncpy(s_ctx->dbTriggerSource, "pump", sizeof(s_ctx->dbTriggerSource) - 1);
+                s_ctx->dbTriggerSource[sizeof(s_ctx->dbTriggerSource) - 1] = '\0';
+                xSemaphoreGive(s_ctx->mutexContext);
+            }
+            g_pumpEventPending = true;
+            xSemaphoreGive(s_ctx->semDBUpdate);
+        }
+
         request->send(200, "text/plain", current_mode);
     });
- 
+
     server.on("/api/wifi-list", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         JsonDocument src;
@@ -424,7 +406,7 @@ void connnectWSV()
         serializeJson(outDoc, out);
         request->send(200, "application/json", out);
     });
- 
+
     server.on("/api/server-url", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         JsonDocument doc;
@@ -433,23 +415,6 @@ void connnectWSV()
         serializeJson(doc, out);
         request->send(200, "application/json", out);
     });
- 
-    auto *serverUrlHandler = new AsyncCallbackJsonWebHandler("/api/server-url",
-        [](AsyncWebServerRequest *request, JsonVariant &doc) {
-            if (!requireDeviceAuth(request)) return;
-            String url = doc["url"] | String("");
-            url.trim();
-            if (url.isEmpty() || url.length() > 256 ||
-                !(url.startsWith("http://") || url.startsWith("https://"))) {
-                request->send(400, "application/json", "{\"error\":\"invalid url\"}");
-                return;
-            }
-            Save_server_url(url);
-            request->send(200, "application/json", "{\"ok\":true}");
-        });
-    serverUrlHandler->setMethod(HTTP_POST);
-    serverUrlHandler->setMaxContentLength(1024);
-    server.addHandler(serverUrlHandler);
 
     auto *wifiSwitchHandler = new AsyncCallbackJsonWebHandler("/api/wifi-switch",
         [](AsyncWebServerRequest *request, JsonVariant &doc) {
@@ -492,10 +457,10 @@ void connnectWSV()
     server.on("/redirect", HTTP_GET, captiveRedirect);
     server.on("/canonical.html", HTTP_GET, captiveRedirect);
     server.on("/success.txt", HTTP_GET, captiveRedirect);
- 
+
     server.onNotFound([](AsyncWebServerRequest *request) {
         String url = request->url();
-        if (url.endsWith(".ico") || url.endsWith(".png") || url.endsWith(".jpg") || 
+        if (url.endsWith(".ico") || url.endsWith(".png") || url.endsWith(".jpg") ||
             url.endsWith(".css") || url.endsWith(".js") || url.endsWith(".map") ||
             url == "/" || url == "/dashboard.html") {
             request->send(404, "text/plain", "Not found");
@@ -507,24 +472,23 @@ void connnectWSV()
             request->send(404, "text/plain", "Not found");
         }
     });
- 
+
     server.begin();
-    ElegantOTA.begin(&server, OTA_HTTP_USER, OTA_HTTP_PASS);
+    ElegantOTA.begin(&server, DEVICE_HTTP_USER, DEVICE_HTTP_PASS);
     webserver_isrunning = true;
 }
- 
+
 void Webserver_stop()
 {
     ws.closeAll();
     server.end();
     webserver_isrunning = false;
 }
- 
+
 void Webserver_reconnect()
 {
-    if (!webserver_isrunning)
-    {
-        connnectWSV();
+    if (!webserver_isrunning) {
+        startWebServer();
     }
     ElegantOTA.loop();
 }

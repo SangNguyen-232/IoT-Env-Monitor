@@ -1,4 +1,3 @@
-#include "shared_context.h"
-#include "device_config.h"
+#pragma once
 
-void Task_Toogle_BOOT(void *pvParameters);
+void Task_Toggle_BOOT(void *pvParameters);

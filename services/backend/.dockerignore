@@ -4,4 +4,3 @@ npm-debug.log*
 *.md
 .git
 .gitignore
-test
