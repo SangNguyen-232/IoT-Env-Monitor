@@ -12,24 +12,24 @@ A real-time IoT environmental monitoring and irrigation control system running o
 - [Directory Structure](#directory-structure)
 - [ESP32-S3 Firmware](#esp32-s3-firmware)
   - [FreeRTOS Tasks](#freertos-tasks)
-  - [SharedContext & Synchronization](#sharedcontext--synchronization)
+  - [SharedContext &amp; Synchronization](#sharedcontext--synchronization)
   - [Risk Classification Policy](#risk-classification-policy)
   - [TinyML Inference](#tinyml-inference)
-  - [Pump Control & Safety Interlocks](#pump-control--safety-interlocks)
-  - [Wi-Fi, Captive Portal & Embedded Web Server](#wi-fi-captive-portal--embedded-web-server)
-  - [LittleFS Storage & Factory Reset](#littlefs-storage--factory-reset)
-- [Backend, Database & Edge Gateway](#backend-database--edge-gateway)
+  - [Pump Control &amp; Safety Interlocks](#pump-control--safety-interlocks)
+  - [Wi-Fi, Captive Portal &amp; Embedded Web Server](#wi-fi-captive-portal--embedded-web-server)
+  - [LittleFS Storage &amp; Factory Reset](#littlefs-storage--factory-reset)
+- [Backend, Database &amp; Edge Gateway](#backend-database--edge-gateway)
   - [Backend API Endpoints](#backend-api-endpoints)
-  - [PostgreSQL Schema & Migrations](#postgresql-schema--migrations)
-  - [Authentication, RBAC & HMAC Device Tickets](#authentication-rbac--hmac-device-tickets)
-  - [Cloudflare Tunnel & Worker Gateway](#cloudflare-tunnel--worker-gateway)
+  - [PostgreSQL Schema &amp; Migrations](#postgresql-schema--migrations)
+  - [Authentication, RBAC &amp; HMAC Device Tickets](#authentication-rbac--hmac-device-tickets)
+  - [Cloudflare Tunnel &amp; Worker Gateway](#cloudflare-tunnel--worker-gateway)
 - [Dashboards](#dashboards)
   - [Embedded Device Dashboard](#embedded-device-dashboard)
   - [Central Admin Dashboard](#central-admin-dashboard)
 - [TinyML Training Pipeline](#tinyml-training-pipeline)
 - [Device Utility Tools](#device-utility-tools)
-- [Installation & Deployment](#installation--deployment)
-- [Libraries & Runtime Versions](#libraries--runtime-versions)
+- [Installation &amp; Deployment](#installation--deployment)
+- [Libraries &amp; Runtime Versions](#libraries--runtime-versions)
 
 ---
 
@@ -72,8 +72,8 @@ Every **5 seconds**, each ESP32-S3 node samples **temperature**, **air humidity*
 ┌──────────────────────────────────────┐     ┌─────────────────────────┐
 │ Cloudflare Worker Gateway (optional) │     │ Browser (Same LAN)      │
 │ services/gateway (VPC Service proxy) │     │ Embedded Device UI      │
-└──────────────────┬───────────────────┘     └─────────▲───────────────┘
-                   │ cloudflared tunnel                │ ?ticket=<HMAC>
+└──────────────────┬───────────────────┘     └─────────────────────────┘
+                   │ cloudflared tunnel                ▲ ?ticket=<HMAC>
                    ▼                                   │
 ┌──────────────────────────────────────────────────────┴───────────────┐
 │                   Docker Compose Stack (iot_net)                     │
@@ -87,16 +87,16 @@ Every **5 seconds**, each ESP32-S3 node samples **temperature**, **air humidity*
 
 ## Hardware Pinout
 
-| Component | GPIO / Bus | Configuration & Role |
-| :--- | :--- | :--- |
-| **ESP32-S3 (Yolo Uno)** | — | 240 MHz MCU, 8 MB Flash (`default_8MB.csv`), FreeRTOS + TFLite Micro |
-| **DHT20 Sensor** | I2C (`SDA = GPIO11`, `SCL = GPIO12`) | Ambient temperature (°C) and relative humidity (%) |
-| **Soil Moisture Sensor** | ADC (`SOIL_PIN = GPIO2`) | Raw ADC `[0–4095]` mapped linearly to `[0–100]%` |
-| **16×2 I2C LCD** | I2C (`0x27`, `SDA = 11`, `SCL = 12`) | Displays `T`, `H`, `SM`, and composite safety status |
-| **Status LED** | `LED_GPIO = GPIO48` | Blinks according to temperature risk level |
-| **NeoPixel WS2812B** | `NEO_PIN = GPIO45` (`LED_COUNT = 1`) | Displays RGB color according to humidity risk level |
-| **Mini Water Pump (Relay)** | `PUMP_PIN = GPIO10` | Active-HIGH relay output controlled by `task_pump` |
-| **BOOT Button** | `BOOT_PIN = GPIO0` (`INPUT_PULLUP`) | Hold `> 2 s` for factory reset of network/server config |
+| Component                         | GPIO / Bus                                 | Configuration & Role                                                   |
+| :-------------------------------- | :----------------------------------------- | :--------------------------------------------------------------------- |
+| **ESP32-S3 (Yolo Uno)**     | —                                         | 240 MHz MCU, 8 MB Flash (`default_8MB.csv`), FreeRTOS + TFLite Micro |
+| **DHT20 Sensor**            | I2C (`SDA = GPIO11`, `SCL = GPIO12`)   | Ambient temperature (°C) and relative humidity (%)                    |
+| **Soil Moisture Sensor**    | ADC (`SOIL_PIN = GPIO2`)                 | Raw ADC `[0–4095]` mapped linearly to `[0–100]%`                 |
+| **16×2 I2C LCD**           | I2C (`0x27`, `SDA = 11`, `SCL = 12`) | Displays `T`, `H`, `SM`, and composite safety status             |
+| **Status LED**              | `LED_GPIO = GPIO48`                      | Blinks according to temperature risk level                             |
+| **NeoPixel WS2812B**        | `NEO_PIN = GPIO45` (`LED_COUNT = 1`)   | Displays RGB color according to humidity risk level                    |
+| **Mini Water Pump (Relay)** | `PUMP_PIN = GPIO10`                      | Active-HIGH relay output controlled by `task_pump`                   |
+| **BOOT Button**             | `BOOT_PIN = GPIO0` (`INPUT_PULLUP`)    | Hold `> 2 s` for factory reset of network/server config              |
 
 ---
 
@@ -200,17 +200,18 @@ IoT-Env-Monitor/
 
 `setup()` initializes `SharedContext`, synchronization primitives, LittleFS configuration, and spawns **7 FreeRTOS tasks** at priority `2`:
 
-| Task Function | Stack (words) | Period / Trigger | Responsibility |
-| :--- | :---: | :--- | :--- |
-| `temp_humi_monitor` | `4096` | Every `5000 ms` | Reads DHT20 & soil ADC, computes risk states, updates 16×2 LCD, broadcasts WebSocket sensor JSON, signals `semLEDUpdate`, `semNeoUpdate`, and `semDBUpdate` |
-| `led_blinky` | `2048` | Phase delay / `semLEDUpdate` | Blinks `GPIO48` (`1000 ms`, `500 ms`, or `100 ms` per HIGH/LOW phase); adapts immediately when `semLEDUpdate` fires |
-| `neo_blinky` | `2048` | Event-driven (`semNeoUpdate`) | Updates WS2812B (`GPIO45`) color only when `neoState` changes |
-| `task_pump` | `3072` | Every `100 ms` | Drives pump relay (`GPIO10`) in `AUTO` or `MANUAL` mode with runtime/fault protections; pushes WebSocket & DB events on state change |
-| `tiny_ml_task` | `8192` | Every `5000 ms` | Runs TFLite Micro inference on `[T, H, SM]` and updates cumulative `mlRollAcc` |
-| `task_database` | `8192` | Event-driven (`semDBUpdate`) | Sends `POST /sensor` with `200 ms` per-source debounce and pump-event priority |
-| `Task_Toggle_BOOT` | `4096` | Polled every `50 ms` | Triggers factory reset if `BOOT` (`GPIO0`) is held `> 2000 ms` |
+| Task Function         | Stack (words) | Period / Trigger                | Responsibility                                                                                                                                                     |
+| :-------------------- | :-----------: | :------------------------------ | :----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `temp_humi_monitor` |   `4096`   | Every `5000 ms`               | Reads DHT20 & soil ADC, computes risk states, updates 16×2 LCD, broadcasts WebSocket sensor JSON, signals `semLEDUpdate`, `semNeoUpdate`, and `semDBUpdate` |
+| `led_blinky`        |   `2048`   | Phase delay / `semLEDUpdate`  | Blinks `GPIO48` (`1000 ms`, `500 ms`, or `100 ms` per HIGH/LOW phase); adapts immediately when `semLEDUpdate` fires                                      |
+| `neo_blinky`        |   `2048`   | Event-driven (`semNeoUpdate`) | Updates WS2812B (`GPIO45`) color only when `neoState` changes                                                                                                  |
+| `task_pump`         |   `3072`   | Every `100 ms`                | Drives pump relay (`GPIO10`) in `AUTO` or `MANUAL` mode with runtime/fault protections; pushes WebSocket & DB events on state change                         |
+| `tiny_ml_task`      |   `8192`   | Every `5000 ms`               | Runs TFLite Micro inference on `[T, H, SM]` and updates cumulative `mlRollAcc`                                                                                 |
+| `task_database`     |   `8192`   | Event-driven (`semDBUpdate`)  | Sends `POST /sensor` with `200 ms` per-source debounce and pump-event priority                                                                                 |
+| `Task_Toggle_BOOT`  |   `4096`   | Polled every `50 ms`          | Triggers factory reset if `BOOT` (`GPIO0`) is held `> 2000 ms`                                                                                               |
 
 `loop()` handles non-blocking runtime maintenance (`100 ms` cadence):
+
 - Executes live Wi-Fi switching (`Wifi_switch_to()`) when `g_wifiSwitchFlag` is raised.
 - Steps the non-blocking STA reconnection state machine (`Wifi_reconnect()`) and Captive Portal DNS server (`Wifi_processCaptiveDNS()`).
 - Keeps the HTTP/WebSocket server active (`Webserver_reconnect()`) and services `ElegantOTA.loop()`.
@@ -264,7 +265,10 @@ Defined in `firmware/include/risk_policy.h` (`1 = Normal`, `2 = Warning`, `3 = C
 3. **Composite Safety Label (`lcdState` & DB `Message`)**:
    - **Hard Safety Interlock**: Immediately returns `Critical (3)` if `T ≥ 40°C`, `H ≥ 90%`, `soil < 15%`, or `soil > 60%`.
    - **Weighted Piecewise Penalty (`risk_pure_mathematical_label`)**:
-     $$r = 0.35 \cdot \text{score}(T) + 0.20 \cdot \text{score}(H) + 0.45 \cdot \text{score}(\text{soil})$$
+     $$
+     r = 0.35 \cdot \text{score}(T) + 0.20 \cdot \text{score}(H) + 0.45 \cdot \text{score}(\text{soil})
+     $$
+
      - `r ≤ 3.0` → `Normal (1)`
      - `3.0 < r ≤ 6.5` → `Warning (2)`
      - `r > 6.5` → `Critical (3)`
@@ -274,6 +278,7 @@ Defined in `firmware/include/risk_policy.h` (`1 = Normal`, `2 = Warning`, `3 = C
 ### TinyML Inference
 
 Implemented in `firmware/src/tinyml.cpp` using `TensorFlowLite_ESP32`:
+
 - **Architecture**: `Input(3) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)` (float32, 16 KiB tensor arena).
 - **Validation**: Skips invalid/NaN sensor readings (`sensor_readings_valid()`), compares `argmax` prediction against `risk_pure_mathematical_label()`, and updates session-wide rolling accuracy `mlRollAcc` (reported to PostgreSQL in the `Score` field).
 
@@ -282,6 +287,7 @@ Implemented in `firmware/src/tinyml.cpp` using `TensorFlowLite_ESP32`:
 ### Pump Control & Safety Interlocks
 
 Implemented in `firmware/src/pump.cpp` on `PUMP_PIN = GPIO10`:
+
 - **Freshness Guard**: In `AUTO` mode, if no valid soil sample has been recorded within `SOIL_SAMPLE_STALE_MS` (`15 s`), the pump stays `OFF`.
 - **AUTO Mode**:
   - Turns **ON** when `soilMoisture < 25%` (`PUMP_SOIL_ON`).
@@ -321,14 +327,15 @@ Implemented in `firmware/src/pump.cpp` on `PUMP_PIN = GPIO10`:
 
 ### LittleFS Storage & Factory Reset
 
-| LittleFS Path | Purpose |
-| :--- | :--- |
+| LittleFS Path                                              | Purpose                                                                                                                             |
+| :--------------------------------------------------------- | :---------------------------------------------------------------------------------------------------------------------------------- |
 | `/dashboard.html`, `/dashboard.css`, `/dashboard.js` | Embedded Device Dashboard static assets (protected from unauthenticated access; internal config files are blocked by static filter) |
-| `/info.dat` | Active Wi-Fi JSON (`WIFI_SSID`, `WIFI_PASS`, `STA_IP`) |
-| `/wifi_list.json` | Saved Wi-Fi history (`[{"ssid","pass","sta_ip"}, ...]`, newest first) |
-| `/server.json` | Optional runtime override `{"url": "https://..."}` for `SENSOR_API_URL` |
+| `/info.dat`                                              | Active Wi-Fi JSON (`WIFI_SSID`, `WIFI_PASS`, `STA_IP`)                                                                        |
+| `/wifi_list.json`                                        | Saved Wi-Fi history (`[{"ssid","pass","sta_ip"}, ...]`, newest first)                                                             |
+| `/server.json`                                           | Optional runtime override `{"url": "https://..."}` for `SENSOR_API_URL`                                                         |
 
 **Factory Reset (`BOOT_PIN = GPIO0` held `> 2 s`)**:
+
 - Deletes `/info.dat`, `/wifi_list.json`, and `/server.json` from LittleFS, then reboots into AP Mode.
 
 ---
@@ -339,31 +346,32 @@ Implemented in `firmware/src/pump.cpp` on `PUMP_PIN = GPIO10`:
 
 Implemented in `services/backend/src/index.js` (Express 5, port `3000`):
 
-| Endpoint | Method | Auth | Description |
-| :--- | :---: | :---: | :--- |
-| `/healthz` | `GET` | — | Database connectivity health check (`200` / `503`) |
-| `/sensor` | `POST` | `X-Device-Key` | Validates and inserts ESP32 telemetry into `sensor_logs` |
-| `/login` | `GET` / `POST` | — | Login page & rate-limited session login (`express-session`) |
-| `/logout` | `POST` | — | Destroys active session |
-| `/api/me` | `GET` | — | Returns `{loggedIn, username, role}` |
-| `/admin/*` | `GET` | Logged in | Serves static Admin Dashboard (`admin.html`, `admin.css`, `admin.js`) |
-| `/admin/api/devices` | `GET` | Logged in | Latest record & online age per `(device_id, lan_ip)` filtered by RBAC |
-| `/admin/api/devices/:device_id` | `DELETE` | Admin | Deletes logs for a device (optionally scoped by `?lan_ip=...`) |
-| `/admin/api/devices/:device_id/ticket` | `POST` | Logged in | Verifies device password & returns a 5-minute HMAC ticket |
-| `/admin/api/devices/:device_id/has-password` | `GET` | Admin | Checks whether a device password is set |
-| `/admin/api/devices/:device_id/password` | `POST` / `DELETE` | Admin | Sets/updates or removes a device password (`bcrypt`) |
-| `/admin/api/devices/:device_id/access-request` | `POST` | User | Requests temporary admin approval for a passwordless device |
-| `/admin/api/access-requests` | `GET` | Admin | Lists pending temporary device access requests |
-| `/admin/api/access-requests/:id/status` | `GET` | User | Polls request decision and receives HMAC ticket upon approval |
-| `/admin/api/access-requests/:id/decision` | `POST` | Admin | Approves or denies a pending access request |
-| `/admin/api/users` | `GET` / `POST` | Admin | Lists system accounts or creates a new `admin` / `user` account |
-| `/admin/api/users/:id/devices` | `GET` / `PUT` | Admin | Reads or updates `(device_id, lan_ip)` access grants for a `user` |
+| Endpoint                                         |        Method        |       Auth       | Description                                                                 |
+| :----------------------------------------------- | :-------------------: | :--------------: | :-------------------------------------------------------------------------- |
+| `/healthz`                                     |        `GET`        |        —        | Database connectivity health check (`200` / `503`)                      |
+| `/sensor`                                      |       `POST`       | `X-Device-Key` | Validates and inserts ESP32 telemetry into `sensor_logs`                  |
+| `/login`                                       |  `GET` / `POST`  |        —        | Login page & rate-limited session login (`express-session`)               |
+| `/logout`                                      |       `POST`       |        —        | Destroys active session                                                     |
+| `/api/me`                                      |        `GET`        |        —        | Returns `{loggedIn, username, role}`                                      |
+| `/admin/*`                                     |        `GET`        |    Logged in    | Serves static Admin Dashboard (`admin.html`, `admin.css`, `admin.js`) |
+| `/admin/api/devices`                           |        `GET`        |    Logged in    | Latest record & online age per `(device_id, lan_ip)` filtered by RBAC     |
+| `/admin/api/devices/:device_id`                |      `DELETE`      |      Admin      | Deletes logs for a device (optionally scoped by `?lan_ip=...`)            |
+| `/admin/api/devices/:device_id/ticket`         |       `POST`       |    Logged in    | Verifies device password & returns a 5-minute HMAC ticket                   |
+| `/admin/api/devices/:device_id/has-password`   |        `GET`        |      Admin      | Checks whether a device password is set                                     |
+| `/admin/api/devices/:device_id/password`       | `POST` / `DELETE` |      Admin      | Sets/updates or removes a device password (`bcrypt`)                      |
+| `/admin/api/devices/:device_id/access-request` |       `POST`       |       User       | Requests temporary admin approval for a passwordless device                 |
+| `/admin/api/access-requests`                   |        `GET`        |      Admin      | Lists pending temporary device access requests                              |
+| `/admin/api/access-requests/:id/status`        |        `GET`        |       User       | Polls request decision and receives HMAC ticket upon approval               |
+| `/admin/api/access-requests/:id/decision`      |       `POST`       |      Admin      | Approves or denies a pending access request                                 |
+| `/admin/api/users`                             |  `GET` / `POST`  |      Admin      | Lists system accounts or creates a new `admin` / `user` account         |
+| `/admin/api/users/:id/devices`                 |   `GET` / `PUT`   |      Admin      | Reads or updates `(device_id, lan_ip)` access grants for a `user`       |
 
 ---
 
 ### PostgreSQL Schema & Migrations
 
 Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
+
 - **`sensor_logs`** (`database/schema/base.sql`): Stores `id`, `timestamp_real`, `timestamp_up`, `received_at`, numeric `temperature`, `humidity`, `soil_moisture`, `"PUMP_state"`, `"MODE_state"`, `"Message"`, `"Score"`, `device_id` (MAC), `lan_ip`, `latency` (µs), and `trigger_source` (`sensor` | `pump`). Rows older than `SENSOR_RETENTION_DAYS` (default `90`, `0` disables) are purged automatically every 6 hours.
 - **`device_credentials`** (`database/schema/base.sql`): Stores per-device `bcrypt` password hashes (`device_id` PK).
 - **`system_users` & `user_devices`** (`database/migrations/001_auth.sql`): Stores `admin`/`user` accounts and per-user `(device_id, lan_ip)` permissions.
@@ -392,13 +400,17 @@ Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
 ## Dashboards
 
 ### Embedded Device Dashboard
+
 Located in `firmware/data/` and served directly by the ESP32-S3:
+
 - Real-time temperature, humidity, soil moisture, composite status banner, and live Chart.js history (`5s` / `15s` intervals, with offline canvas fallback).
 - Instant `ON`/`OFF` and `AUTO`/`MANUAL` pump controls synchronized via WebSocket.
 - Settings modal for switching/adding Wi-Fi networks and updating the backend `SENSOR_API_URL` (`/server.json`).
 
 ### Central Admin Dashboard
+
 Located in `services/backend/public/admin/`:
+
 - Polls `/admin/api/devices` every `5 s` to display multi-device telemetry cards, live online/countdown/offline indicators, and summary counters.
 - Provides modals for device password verification/management, real-time access-request approval notifications, account creation, and granular per-LAN-IP device permission assignment.
 
@@ -416,6 +428,7 @@ python ml/train_export.py
 ```
 
 `ml/train_export.py`:
+
 1. Generates `21,000` labeled samples (`16,000` boundary-grid noisy samples + `5,000` uniform random samples) aligned with `risk_policy.h` → `ml/data/dataset.csv`.
 2. Trains `Input(3) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)` with early stopping.
 3. Converts to unquantized float32 TFLite, verifies schema v3 operator compatibility (`FULLY_CONNECTED` v1, `SOFTMAX` v1) and numerical equivalence, and writes both `ml/models/dht_risk_model.tflite` and `firmware/include/dht_risk_model.h`.
@@ -478,8 +491,8 @@ pio device monitor
 ## Libraries & Runtime Versions
 
 - **Firmware (`platformio.ini`, `espressif32@7.1.3`)**:
-  - `tanakamasayuki/TensorFlowLite_ESP32@1.0.0`
-  - `ESP32Async/ESPAsyncWebServer@3.12.1`
+  - `TensorFlowLite_ESP32` (`firmware/lib/TensorFlowLite_ESP32`) — TensorFlow Lite Micro standalone clean engine
+  - `ESPAsyncWebServer@3.12.1`
   - `bblanchon/ArduinoJson@7.4.3`
   - `ayushsharma82/ElegantOTA@4.0.0`
   - `adafruit/Adafruit NeoPixel@1.15.5`
