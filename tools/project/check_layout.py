@@ -53,13 +53,9 @@ def main() -> int:
         if source.name == 'secrets.h':
             continue
         for header in re.findall(r'#\s*include\s*[<"]([^>"\n]+)[>"]', source.read_text()):
-            if '/' in header:
+            if header in own_headers:
                 target = ROOT / 'firmware/include' / header
-                # External SDK and TensorFlow includes are resolved by PlatformIO.
-                if header.split('/')[0] in {x.name for x in (ROOT / 'firmware/include').iterdir() if x.is_dir()}:
-                    require(target.is_file() or header == 'config/secrets.h', f'{source}: unresolved project include {header}')
-            else:
-                require(header not in own_headers, f'{source}: project include lacks module prefix: {header}')
+                require(target.is_file() or header == 'secrets.h', f'{source}: unresolved project include {header}')
     print('Source move map and module includes: OK')
 
     for folder in ('services/backend', 'services/gateway'):
@@ -75,7 +71,7 @@ def main() -> int:
     print('Service entry points, assets and package lockfiles: OK')
 
     model = (ROOT / 'ml/models/dht_risk_model.tflite').read_bytes()
-    text = (ROOT / 'firmware/include/generated/dht_risk_model.h').read_text()
+    text = (ROOT / 'firmware/include/dht_risk_model.h').read_text()
     embedded = bytes(int(x, 16) for x in re.findall(r'0x([0-9a-fA-F]{2})', text))
     require(model == embedded, 'Exported model/header mismatch')
     print('Versioned TFLite model and generated header: OK')
@@ -104,7 +100,7 @@ def main() -> int:
         if not (ROOT / filename).exists():
             continue  # The move may not yet be staged.
         require(not filename.startswith(('local/', 'backups/', '.pio/', '.venv/')), f'Private/generated path visible to Git: {filename}')
-        require(filename not in ('.env', 'firmware/include/config/secrets.h', 'include/secrets.h', 'data/wifi_info.json'), f'Secret visible to Git: {filename}')
+        require(filename not in ('.env', 'firmware/include/config/secrets.h', 'firmware/include/secrets.h', 'include/secrets.h', 'data/wifi_info.json'), f'Secret visible to Git: {filename}')
     print('Local configuration and work products excluded from Git: OK')
     return 0
 

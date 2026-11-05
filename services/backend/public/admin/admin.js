@@ -145,9 +145,8 @@
           elS.className = "sensor-value js-val-soil " + soilColorClass(data.soil_moisture);
         }
       }
- 
-      };
- 
+    };
+
     ws.onclose = function () {
       delete deviceWsMap[cardKey];
       setTimeout(function () {
@@ -172,11 +171,7 @@
     var host = lanHost(device);
     return host ? ("http://" + host + "/") : "";
   }
- 
-  function fmtValue(v) {
-    return (v !== null && v !== undefined && v !== "") ? v : "—";
-  }
- 
+
   function fmtTemp(v) { var n = parseFloat(v); return isNaN(n) ? "—" : n.toFixed(2) + "\u00B0C"; }
   function fmtHumi(v) { var n = parseFloat(v); return isNaN(n) ? "—" : (n >= 99.95 ? "100" : n.toFixed(2)) + "%"; }
   function fmtSoil(v) { var n = parseFloat(v); if (isNaN(n)) return "—"; var s = Math.round(n); return (s < 10 ? "0" + s : "" + s) + "%"; }
@@ -193,15 +188,7 @@
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
   }
- 
-  function fmtTimestamp(tsStr) {
-    if (!tsStr) return "—";
-    var d = new Date(tsStr);
-    var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
-    return pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + d.getFullYear() +
-      " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
-  }
- 
+
   function formatOfflineTime(seconds) {
     seconds = Math.max(0, Math.floor(seconds));
     var h = Math.floor(seconds / 3600);
@@ -330,7 +317,7 @@
           return fetch(url, { method: "DELETE" })
             .then(function (r) {
               if (!r.ok) throw new Error("Thất bại tại ID: " + id);
-              return key;
+              return id;
             });
         });
  

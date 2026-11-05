@@ -1,5 +1,5 @@
-#include "domain/input_safety.h"
-#include "domain/risk_policy.h"
+#include "input_safety.h"
+#include "risk_policy.h"
 #include <assert.h>
 #include <stdint.h>
 

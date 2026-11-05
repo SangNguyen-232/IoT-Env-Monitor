@@ -6,6 +6,7 @@
 .env*
 !.env.example
 firmware/include/config/secrets.h
+firmware/include/secrets.h
 # Also protect exports created by historical instructions.
 include/secrets.h
 data/wifi_info.json

@@ -147,7 +147,7 @@ def main() -> int:
         parser.error("--epochs must be positive")
     root = os.path.abspath(args.output_dir)
     csv_path    = os.path.join(root, "ml", "data", "dataset.csv")
-    header_path = os.path.join(root, "firmware", "include", "generated", "dht_risk_model.h")
+    header_path = os.path.join(root, "firmware", "include", "dht_risk_model.h")
     tflite_path = os.path.join(root, "ml", "models", "dht_risk_model.tflite")
  
     rng = np.random.default_rng(42)
