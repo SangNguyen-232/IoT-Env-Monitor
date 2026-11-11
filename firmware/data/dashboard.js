@@ -6,8 +6,8 @@
   var DEFAULT_LNG = 108.057041;
 
   var state = {
-    pumpState: "OFF",
-    pumpMode: "AUTO",
+    fanState: "OFF",
+    fanMode: "AUTO",
   };
 
   // ---------- DOM refs ----------
@@ -17,11 +17,36 @@
     soil: document.getElementById("statSoil"),
     time: document.getElementById("statTime"),
     message: document.getElementById("statMessage"),
-    pumpBadge: document.getElementById("pumpBadge"),
+    fanBadge: document.getElementById("fanBadge"),
     modeBadge: document.getElementById("modeBadge"),
-    pumpToggleBtn: document.getElementById("pumpToggleBtn"),
+    fanToggleBtn: document.getElementById("fanToggleBtn"),
     modeToggleBtn: document.getElementById("modeToggleBtn"),
+    controlStatus: document.getElementById("controlStatus"),
   };
+
+  // ---------- Sensor display formatting (numeric samples stay unchanged) ----------
+  function validDisplayValue(value, min, max) {
+    return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max;
+  }
+
+  function formatTemperature(value) {
+    if (!validDisplayValue(value, -40, 80)) return "--\u00B0C";
+    var rounded = Math.round(Math.abs(value) * 10) / 10;
+    if (value < 0 && rounded !== 0) rounded = -rounded;
+    return rounded.toFixed(1) + "\u00B0C";
+  }
+
+  function formatHumidity(value) {
+    if (!validDisplayValue(value, 0, 100)) return "--%";
+    var rounded = Math.round(value * 10) / 10;
+    return (rounded === 0 ? "00" : String(rounded)) + "%";
+  }
+
+  function formatSoil(value) {
+    if (!validDisplayValue(value, 0, 100)) return "--%";
+    var rounded = Math.round(value);
+    return (rounded < 10 ? "0" : "") + rounded + "%";
+  }
 
   // ---------- Risk color helpers (mirrors risk_policy.h thresholds) ----------
   function tempColorClass(t) {
@@ -32,11 +57,6 @@
   function humiColorClass(h) {
     if (h < 50.0 || h > 80.0) return "val-critical";
     if (h < 60.0 || h > 70.0) return "val-warning";
-    return "val-normal";
-  }
-  function soilColorClass(s) {
-    if (s < 25.0 || s > 45.0) return "val-critical";
-    if (s < 30.0 || s > 40.0) return "val-warning";
     return "val-normal";
   }
 
@@ -115,11 +135,23 @@
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        spanGaps: false,
         animation: { duration: 300 },
-        plugins: { legend: { display: false } },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: function (context) {
+                if (context.datasetIndex === 0) return "Temperature: " + formatTemperature(context.raw);
+                if (context.datasetIndex === 1) return "Humidity: " + formatHumidity(context.raw);
+                return "Soil Moisture: " + formatSoil(context.raw);
+              },
+            },
+          },
+        },
         scales: {
           x: { ticks: { color: "#828ba3", font: { size: 10 } }, grid: { color: "rgba(255,255,255,0.05)" } },
-          y: { min: 0, max: 100, ticks: { color: "#828ba3", font: { size: 10 } }, grid: { color: "rgba(255,255,255,0.05)" } },
+          y: { min: -40, max: 100, ticks: { color: "#828ba3", font: { size: 10 } }, grid: { color: "rgba(255,255,255,0.05)" } },
         },
       },
     });
@@ -154,11 +186,11 @@
     fallbackCtx.clearRect(0, 0, w, h);
     fallbackCtx.font = "10px -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif";
 
-    var yTicks = [0, 25, 50, 75, 100];
+    var yTicks = [-40, -20, 0, 20, 40, 60, 80, 100];
     fallbackCtx.textAlign = "right";
     fallbackCtx.textBaseline = "middle";
     yTicks.forEach(function (g) {
-      var y = padTop + plotH - (g / 100) * plotH;
+      var y = padTop + plotH - ((g + 40) / 140) * plotH;
       fallbackCtx.strokeStyle = "rgba(255,255,255,0.05)";
       fallbackCtx.lineWidth = 1;
       fallbackCtx.beginPath();
@@ -190,48 +222,58 @@
 
     function drawSeries(values, color) {
       if (values.length === 0) return;
-      var pts = values.map(function (v, i) {
-        return {
-          x: xAt(i),
-          y: padTop + plotH - (Math.max(0, Math.min(100, v)) / 100) * plotH,
-        };
-      });
+      var pts = [];
 
-      if (pts.length >= 2) {
-        fallbackCtx.strokeStyle = color;
-        fallbackCtx.lineWidth = 2;
-        fallbackCtx.lineJoin = "round";
-        fallbackCtx.lineCap = "round";
-        fallbackCtx.beginPath();
-        fallbackCtx.moveTo(pts[0].x, pts[0].y);
+      function drawSegment() {
+        if (pts.length >= 2) {
+          fallbackCtx.strokeStyle = color;
+          fallbackCtx.lineWidth = 2;
+          fallbackCtx.lineJoin = "round";
+          fallbackCtx.lineCap = "round";
+          fallbackCtx.beginPath();
+          fallbackCtx.moveTo(pts[0].x, pts[0].y);
 
-        if (pts.length === 2) {
-          fallbackCtx.lineTo(pts[1].x, pts[1].y);
-        } else {
-          for (var i = 0; i < pts.length - 1; i++) {
-            var p0 = pts[i - 1] || pts[i];
-            var p1 = pts[i];
-            var p2 = pts[i + 1];
-            var p3 = pts[i + 2] || p2;
+          if (pts.length === 2) {
+            fallbackCtx.lineTo(pts[1].x, pts[1].y);
+          } else {
+            for (var i = 0; i < pts.length - 1; i++) {
+              var p0 = pts[i - 1] || pts[i];
+              var p1 = pts[i];
+              var p2 = pts[i + 1];
+              var p3 = pts[i + 2] || p2;
 
-            var cp1x = p1.x + (p2.x - p0.x) / 6;
-            var cp1y = p1.y + (p2.y - p0.y) / 6;
-            var cp2x = p2.x - (p3.x - p1.x) / 6;
-            var cp2y = p2.y - (p3.y - p1.y) / 6;
+              var cp1x = p1.x + (p2.x - p0.x) / 6;
+              var cp1y = p1.y + (p2.y - p0.y) / 6;
+              var cp2x = p2.x - (p3.x - p1.x) / 6;
+              var cp2y = p2.y - (p3.y - p1.y) / 6;
 
-            fallbackCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+              fallbackCtx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
+            }
           }
+
+          fallbackCtx.stroke();
         }
 
-        fallbackCtx.stroke();
+        fallbackCtx.fillStyle = color;
+        pts.forEach(function (p) {
+          fallbackCtx.beginPath();
+          fallbackCtx.arc(p.x, p.y, 3, 0, Math.PI * 2);
+          fallbackCtx.fill();
+        });
       }
 
-      fallbackCtx.fillStyle = color;
-      pts.forEach(function (p) {
-        fallbackCtx.beginPath();
-        fallbackCtx.arc(p.x, p.y, 3, 0, Math.PI * 2);
-        fallbackCtx.fill();
+      values.forEach(function (value, index) {
+        if (typeof value !== "number" || !Number.isFinite(value)) {
+          drawSegment();
+          pts = [];
+          return;
+        }
+        pts.push({
+          x: xAt(index),
+          y: padTop + plotH - ((Math.max(-40, Math.min(100, value)) + 40) / 140) * plotH,
+        });
       });
+      drawSegment();
     }
 
     drawSeries(fallbackData.temp, "#f5a524");
@@ -286,14 +328,14 @@
   }
 
   // ---------- Badges ----------
-  function setPumpBadge(on) {
-    state.pumpState = on ? "ON" : "OFF";
-    els.pumpBadge.textContent = state.pumpState;
-    els.pumpBadge.className = "badge badge-pump " + (on ? "on" : "off");
+  function setFanBadge(on) {
+    state.fanState = on ? "ON" : "OFF";
+    els.fanBadge.textContent = state.fanState;
+    els.fanBadge.className = "badge badge-fan " + (on ? "on" : "off");
   }
 
   function setModeBadge(mode) {
-    state.pumpMode = mode;
+    state.fanMode = mode;
     els.modeBadge.textContent = mode;
     els.modeBadge.className = "badge badge-mode " + (mode === "MANUAL" ? "manual" : "auto");
   }
@@ -314,55 +356,53 @@
         return;
       }
 
-      var haveTemp = typeof data.temperature === "number";
-      var haveHumi = typeof data.humidity === "number";
-      var haveSoil = typeof data.soil_moisture === "number";
+      if (!data || typeof data !== "object" || Array.isArray(data)) return;
+      var hasSensorSnapshot = ["temperature", "humidity", "soil_moisture"].some(function (key) {
+        return Object.prototype.hasOwnProperty.call(data, key);
+      });
+      if (hasSensorSnapshot) {
+        function sampleValue(value, min, max) {
+          return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
+            ? value : null;
+        }
+        var temperature = sampleValue(data.temperature, -40, 80);
+        var humidity = sampleValue(data.humidity, 0, 100);
+        var soil = sampleValue(data.soil_moisture, 0, 100);
 
-      if (haveTemp) {
-        els.temp.textContent = data.temperature.toFixed(1) + "\u00B0C";
-        els.temp.className = "stat-value " + tempColorClass(data.temperature);
-      }
+        els.temp.textContent = formatTemperature(temperature);
+        els.temp.className = "stat-value" + (temperature === null ? "" : " " + tempColorClass(temperature));
+        els.humi.textContent = formatHumidity(humidity);
+        els.humi.className = "stat-value" + (humidity === null ? "" : " " + humiColorClass(humidity));
+        els.soil.textContent = formatSoil(soil);
+        els.soil.className = "stat-value val-soil";
 
-      if (haveHumi) {
-        els.humi.textContent = (data.humidity >= 99.95)
-          ? "100%"
-          : data.humidity.toFixed(1) + "%";
-        els.humi.className = "stat-value " + humiColorClass(data.humidity);
-      }
-
-      if (haveSoil) {
-        var soilVal = Math.round(data.soil_moisture);
-        var soilStr = (soilVal < 10 ? "0" + soilVal : "" + soilVal);
-        els.soil.textContent = soilStr + "%";
-        els.soil.className = "stat-value " + soilColorClass(data.soil_moisture);
-      }
-
-      if (haveTemp || haveHumi || haveSoil) {
         var nowTs = Date.now();
         if (nowTs - lastChartPushTime >= chartIntervalMs) {
           lastChartPushTime = nowTs;
-          pushChartPoint(
-            haveTemp ? data.temperature : (chart && chart.data.datasets[0].data.slice(-1)[0] || 0),
-            haveHumi ? data.humidity : (chart && chart.data.datasets[1].data.slice(-1)[0] || 0),
-            haveSoil ? data.soil_moisture : (chart && chart.data.datasets[2].data.slice(-1)[0] || 0)
-          );
+          pushChartPoint(temperature, humidity, soil);
         }
       }
 
-      if (typeof data.pump_state === "string") {
-        setPumpBadge(data.pump_state.toUpperCase() === "ON");
+      if (typeof data.fan_state === "string") {
+        var fanState = data.fan_state.toUpperCase();
+        if (fanState === "ON" || fanState === "OFF") setFanBadge(fanState === "ON");
       }
-      if (typeof data.pump_mode === "string") {
-        setModeBadge(data.pump_mode.toUpperCase());
+      if (typeof data.fan_mode === "string") {
+        var fanMode = data.fan_mode.toUpperCase();
+        if (fanMode === "AUTO" || fanMode === "MANUAL") setModeBadge(fanMode);
       }
 
-      if (typeof data.lcd_state === "number") {
+      if (hasSensorSnapshot || Object.prototype.hasOwnProperty.call(data, "lcd_state")) {
         var lcdLabelMap = { 1: "Normal", 2: "Warning", 3: "Critical" };
-        els.message.textContent = lcdLabelMap[data.lcd_state] || "--";
+        var validAirSnapshot = !hasSensorSnapshot || (temperature !== null && humidity !== null);
+        var lcdState = validAirSnapshot && (data.lcd_state === 1 || data.lcd_state === 2 || data.lcd_state === 3)
+          ? data.lcd_state : null;
+        els.message.textContent = lcdLabelMap[lcdState] || "--";
         var lcdCls = "stat-sub";
-        if (data.lcd_state === 3) lcdCls += " critical";
-        else if (data.lcd_state === 2) lcdCls += " warning";
-        else lcdCls += " normal";
+        if (lcdState === 3) lcdCls += " critical";
+        else if (lcdState === 2) lcdCls += " warning";
+        else if (lcdState === 1) lcdCls += " normal";
+        else lcdCls += " unknown";
         els.message.className = lcdCls;
       }
 
@@ -390,11 +430,20 @@
     };
   }
 
-  // ---------- Status poll (AP mode overlay) ----------
+  // ---------- Status poll (AP mode overlay and relay state reconciliation) ----------
   function pollStatus() {
     fetch("/api/status")
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
       .then(function (s) {
+        if (s.fan_state === "ON" || s.fan_state === "OFF") {
+          setFanBadge(s.fan_state === "ON");
+        }
+        if (s.fan_mode === "AUTO" || s.fan_mode === "MANUAL") {
+          setModeBadge(s.fan_mode);
+        }
         var apOverlay = document.getElementById("apModeOverlay");
         if (apOverlay) {
           apOverlay.style.display = s.is_ap_mode ? "flex" : "none";
@@ -404,40 +453,161 @@
   }
 
   // ---------- Toggle buttons ----------
-  els.pumpToggleBtn.addEventListener("click", function () {
-    var nextState = state.pumpState === "ON" ? "OFF" : "ON";
+  function requestControl(url, allowedValues, onSuccess) {
+    els.fanToggleBtn.disabled = true;
+    els.modeToggleBtn.disabled = true;
+    els.controlStatus.textContent = "";
 
-    fetch("/toggle-pump?state=" + nextState)
-      .then(function (r) { return r.text(); })
+    fetch(url)
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.text();
+      })
       .then(function (txt) {
-        var resState = txt.trim().toUpperCase();
-        var finalState = (resState === "ON" || resState === "OFF") ? resState : nextState;
-
-        setPumpBadge(finalState === "ON");
-        setModeBadge("MANUAL");
+        var value = txt.trim().toUpperCase();
+        if (allowedValues.indexOf(value) === -1) {
+          throw new Error("Invalid control response");
+        }
+        onSuccess(value);
       })
       .catch(function (err) {
-        console.warn("Lỗi kết nối HTTP, tự động cập nhật trạng thái trên giao diện: ", err);
-        setPumpBadge(nextState === "ON");
-        setModeBadge("MANUAL");
+        console.warn("Không xác nhận được lệnh điều khiển: ", err);
+        els.controlStatus.textContent = "Không xác nhận được lệnh. Kiểm tra kết nối và trạng thái thiết bị.";
+      })
+      .then(function () {
+        els.fanToggleBtn.disabled = false;
+        els.modeToggleBtn.disabled = false;
       });
+  }
+
+  els.fanToggleBtn.addEventListener("click", function () {
+    var nextState = state.fanState === "ON" ? "OFF" : "ON";
+    requestControl("/toggle-fan?state=" + nextState, ["ON", "OFF"], function () {
+      setModeBadge("MANUAL");
+      // The response acknowledges the requested state; telemetry reports GPIO state.
+      pollStatus();
+    });
   });
 
   els.modeToggleBtn.addEventListener("click", function () {
-    var nextMode = state.pumpMode === "MANUAL" ? "AUTO" : "MANUAL";
+    var nextMode = state.fanMode === "MANUAL" ? "AUTO" : "MANUAL";
 
-    fetch("/set-mode?mode=" + nextMode)
-      .then(function (r) { return r.text(); })
-      .then(function (txt) {
-        var resMode = txt.trim().toUpperCase();
-        var finalMode = (resMode === "MANUAL" || resMode === "AUTO") ? resMode : nextMode;
+    requestControl("/set-mode?mode=" + nextMode, ["AUTO", "MANUAL"], setModeBadge);
+  });
 
-        setModeBadge(finalMode);
+  // ---------- Fan AUTO configuration ----------
+  var fanConfigForm = document.getElementById("fanConfigForm");
+  var fanConfigFields = document.getElementById("fanConfigFields");
+  var fanConfigStatus = document.getElementById("fanConfigStatus");
+  var fanActivationLogic = document.getElementById("fanActivationLogic");
+  var fanLogicDescription = document.getElementById("fanLogicDescription");
+  var fanConfigInputs = {
+    temperature_on: document.getElementById("fanTemperatureOn"),
+    temperature_off: document.getElementById("fanTemperatureOff"),
+    humidity_on: document.getElementById("fanHumidityOn"),
+    humidity_off: document.getElementById("fanHumidityOff"),
+  };
+
+  function setFanConfigStatus(message, type) {
+    fanConfigStatus.textContent = message;
+    fanConfigStatus.className = "settings-msg" + (type ? " " + type : "");
+  }
+
+  function updateFanLogicDescription() {
+    fanLogicDescription.textContent = fanActivationLogic.value === "all"
+      ? "BẬT khi nhiệt độ ≥ ngưỡng BẬT VÀ độ ẩm ≥ ngưỡng BẬT. TẮT khi nhiệt độ ≤ ngưỡng TẮT HOẶC độ ẩm ≤ ngưỡng TẮT. Giữ trạng thái hiện tại trong vùng còn lại."
+      : "BẬT khi nhiệt độ ≥ ngưỡng BẬT HOẶC độ ẩm ≥ ngưỡng BẬT. TẮT khi nhiệt độ ≤ ngưỡng TẮT VÀ độ ẩm ≤ ngưỡng TẮT. Giữ trạng thái hiện tại trong vùng còn lại.";
+  }
+
+  function validateFanConfig(config) {
+    var valid = Object.keys(fanConfigInputs).every(function (key) {
+      return typeof config[key] === "number" && Number.isFinite(config[key]);
+    });
+    if (!valid) throw new Error("Nhập đầy đủ bốn ngưỡng bằng số hợp lệ.");
+    if (config.temperature_on < -40 || config.temperature_on > 80 ||
+        config.temperature_off < -40 || config.temperature_off > 80) {
+      throw new Error("Ngưỡng nhiệt độ phải nằm trong khoảng -40 đến 80°C.");
+    }
+    if (config.humidity_on < 0 || config.humidity_on > 100 ||
+        config.humidity_off < 0 || config.humidity_off > 100) {
+      throw new Error("Ngưỡng độ ẩm phải nằm trong khoảng 0 đến 100%.");
+    }
+    if (config.temperature_off >= config.temperature_on || config.humidity_off >= config.humidity_on) {
+      throw new Error("Mỗi ngưỡng TẮT phải thấp hơn ngưỡng BẬT tương ứng.");
+    }
+    if (config.activation_logic !== "any" && config.activation_logic !== "all") {
+      throw new Error("Chọn điều kiện BẬT HOẶC hoặc VÀ.");
+    }
+  }
+
+  function showFanConfig(config) {
+    if (!config || typeof config.configured !== "boolean") throw new Error("Invalid configuration response");
+    if (config.configured) validateFanConfig(config);
+    Object.keys(fanConfigInputs).forEach(function (key) {
+      fanConfigInputs[key].value = config.configured ? String(config[key]) : "";
+    });
+    fanActivationLogic.value = config.activation_logic === "all" ? "all" : "any";
+    updateFanLogicDescription();
+    setFanConfigStatus(config.configured
+      ? "Đang dùng cấu hình FAN đã lưu trên thiết bị."
+      : "Chưa cấu hình: AUTO giữ FAN OFF. Nhập các ngưỡng rồi lưu để kích hoạt AUTO.");
+  }
+
+  function loadFanConfig() {
+    fanConfigFields.disabled = true;
+    fetch("/api/fan-config")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(showFanConfig)
+      .catch(function (err) {
+        console.warn("Không tải được cấu hình FAN: ", err);
+        setFanConfigStatus("Không tải được cấu hình đã lưu. Bạn có thể nhập đầy đủ các ngưỡng để lưu lại.", "error");
+      })
+      .then(function () { fanConfigFields.disabled = false; });
+  }
+
+  fanActivationLogic.addEventListener("change", updateFanLogicDescription);
+  fanConfigForm.addEventListener("input", function () {
+    setFanConfigStatus("Chưa lưu thay đổi. Bấm Lưu cấu hình FAN để áp dụng.");
+  });
+  fanConfigForm.addEventListener("submit", function (event) {
+    event.preventDefault();
+    var config = { activation_logic: fanActivationLogic.value };
+    Object.keys(fanConfigInputs).forEach(function (key) {
+      var raw = fanConfigInputs[key].value.trim();
+      config[key] = raw === "" ? NaN : Number(raw);
+    });
+    try {
+      validateFanConfig(config);
+    } catch (err) {
+      setFanConfigStatus(err.message, "error");
+      return;
+    }
+
+    fanConfigFields.disabled = true;
+    setFanConfigStatus("Đang lưu cấu hình FAN...");
+    fetch("/api/fan-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(config)
+    })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (saved) {
+        if (!saved || saved.configured !== true) throw new Error("Configuration was not saved");
+        showFanConfig(saved);
+        setFanConfigStatus("Đã lưu cấu hình FAN. Ngưỡng mới áp dụng trong chế độ AUTO và được giữ sau khi khởi động lại.", "success");
+        pollStatus();
       })
       .catch(function (err) {
-        console.warn("Lỗi kết nối HTTP khi thay đổi chế độ: ", err);
-        setModeBadge(nextMode);
-      });
+        console.warn("Không xác nhận được việc lưu cấu hình FAN: ", err);
+        setFanConfigStatus("Không xác nhận được việc lưu cấu hình. Kiểm tra kết nối rồi thử lưu lại.", "error");
+      })
+      .then(function () { fanConfigFields.disabled = false; });
   });
 
   // ---------- WiFi list management ----------
@@ -574,6 +744,7 @@
     initMap();
     connectWS();
     pollStatus();
+    loadFanConfig();
     setInterval(pollStatus, 5000);
   }
 

@@ -11,6 +11,10 @@ const BCRYPT_ROUNDS = 10;
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map();
+const SENSOR_TELEMETRY_FIELDS = new Set([
+  'timestamp_real', 'timestamp_up', 'temperature', 'humidity', 'soil_moisture',
+  'FAN_state', 'MODE_state', 'Message', 'Score', 'device_id', 'lan_ip', 'latency', 'trigger_source'
+]);
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -242,6 +246,15 @@ async function purgeOldLogs() {
 }
 
 async function ensureSchema() {
+  const sensorColumns = await pool.query(`
+    SELECT column_name FROM information_schema.columns
+    WHERE table_schema = 'public' AND table_name = 'sensor_logs'
+  `);
+  const columnNames = new Set(sensorColumns.rows.map(row => row.column_name));
+  const requiredColumns = ['id', 'received_at', ...SENSOR_TELEMETRY_FIELDS];
+  if (requiredColumns.some(column => !columnNames.has(column))) {
+    throw new Error('sensor_logs is not initialized for this application. Initialize a fresh database using the documented Docker Compose schema scripts.');
+  }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS "session" (
       sid varchar PRIMARY KEY,
@@ -334,9 +347,12 @@ app.use('/admin', requireLogin, express.static(path.join(__dirname, '../public/a
 
 app.post('/sensor', requireSensorKey, async (req, res) => {
   try {
+    if (Object.keys(req.body).some(field => !SENSOR_TELEMETRY_FIELDS.has(field))) {
+      return res.status(400).json({ error: 'unsupported telemetry fields' });
+    }
     const {
       timestamp_real, timestamp_up, temperature, humidity,
-      soil_moisture, PUMP_state, MODE_state, Message, Score,
+      soil_moisture, FAN_state, MODE_state, Message, Score,
       device_id, lan_ip, latency, trigger_source
     } = req.body;
 
@@ -366,23 +382,23 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
         !optionalNumberValid(humidity, humidityValue, -1, 100) ||
         !optionalNumberValid(soil_moisture, soilValue, 0, 100) ||
         (latency != null && (!Number.isInteger(latency) || latency < 0 || latency > 2147483647)) ||
-        (PUMP_state != null && !['ON', 'OFF'].includes(PUMP_state)) ||
+        (FAN_state != null && !['ON', 'OFF'].includes(FAN_state)) ||
         (MODE_state != null && !['AUTO', 'MANUAL'].includes(MODE_state)) ||
         (Message != null && typeof Message !== 'string') ||
         (Score != null && !['number', 'string'].includes(typeof Score)) ||
-        (trigger_source != null && !['sensor', 'pump'].includes(trigger_source))) {
+        (trigger_source != null && !['sensor', 'fan'].includes(trigger_source))) {
       return res.status(400).json({ error: 'invalid telemetry' });
     }
 
     await pool.query(
       `INSERT INTO sensor_logs
         (timestamp_real, timestamp_up, received_at, temperature, humidity,
-         soil_moisture, "PUMP_state", "MODE_state", "Message", "Score", device_id, lan_ip, latency, trigger_source)
+         soil_moisture, "FAN_state", "MODE_state", "Message", "Score", device_id, lan_ip, latency, trigger_source)
        VALUES ($1,$2,NOW(),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         timestamp_real === 'null' ? null : timestamp_real,
         timestamp_up, tempValue, humidityValue === -1 ? null : humidityValue, soilValue,
-        PUMP_state, MODE_state, safeMessage, Score,
+        FAN_state, MODE_state, safeMessage, Score,
         safeDeviceId,
         safeLanIp,
         latency !== undefined ? latency : null,
@@ -405,7 +421,7 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
           s.device_id, s.lan_ip,
           (s.device_id || CASE WHEN s.lan_ip IS NOT NULL AND s.lan_ip <> '' THEN '_' || s.lan_ip ELSE '' END) AS card_key,
           s.temperature, s.humidity, s.soil_moisture,
-          s."PUMP_state", s."MODE_state", s."Message", s."Score",
+          s."FAN_state", s."MODE_state", s."Message", s."Score",
           s.timestamp_real AS timestamp_real,
           s.timestamp_up   AS timestamp_up,
           COALESCE(s.received_at, s.timestamp_up) AS received_at,

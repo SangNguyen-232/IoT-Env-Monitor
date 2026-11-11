@@ -1,6 +1,7 @@
 #include "tinyml.h"
 #include "risk_policy.h"
 #include "input_safety.h"
+#include "sensor_format.h"
 #include "serial_log.h"
 #include "shared_context.h"
 #include <Arduino.h>
@@ -72,8 +73,8 @@ namespace
             error_reporter->Report("TinyML: expected float32 input/output");
             return;
         }
-        if (tensor_element_count(input) != 3 || tensor_element_count(output) != 3) {
-            error_reporter->Report("TinyML: need input 3 floats (temp,humi,soil), output 3 (softmax). Re-run ml/train_export.py");
+        if (tensor_element_count(input) != 2 || tensor_element_count(output) != 3) {
+            error_reporter->Report("TinyML: need input 2 floats (temp,humi), output 3 (softmax). Re-run ml/train_export.py");
             return;
         }
 
@@ -101,25 +102,22 @@ void tiny_ml_task(void *pvParameters)
     while (1) {
         float temperature = 0.0f;
         float humidity = 0.0f;
-        float soil_moisture = 0.0f;
         bool sample_ready = false;
 
         if (xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(2000)) == pdTRUE) {
             temperature   = ctx->temperature;
             humidity      = ctx->humidity;
-            soil_moisture = static_cast<float>(ctx->soilMoisture);
-            sample_ready  = soil_sample_is_fresh(ctx->soilSampleValid, ctx->soilSampledAtMs, millis());
+            sample_ready  = dht_sample_is_fresh(ctx->dhtSampleValid, ctx->dhtSampledAtMs, millis());
             xSemaphoreGive(ctx->mutexContext);
         }
 
-        if (!sample_ready || !isfinite(temperature) || !isfinite(humidity) || humidity < 0.0f) {
+        if (!sample_ready || !dht_sample_values_are_valid(temperature, humidity)) {
             vTaskDelay(pdMS_TO_TICKS(5000));
             continue;
         }
 
         input->data.f[0] = temperature;
         input->data.f[1] = humidity;
-        input->data.f[2] = soil_moisture;
 
         const unsigned long t0 = millis();
         if (interpreter->Invoke() != kTfLiteOk) {
@@ -133,7 +131,7 @@ void tiny_ml_task(void *pvParameters)
         const int best = argmax_float(output->data.f, nout);
         const int predicted = best + 1; // Map index (0..2) -> Label (1..3)
 
-        const int expected = risk_pure_mathematical_label(temperature, humidity, soil_moisture);
+        const int expected = risk_pure_mathematical_label(temperature, humidity);
 
         if (predicted == expected)
             correct++;
@@ -146,7 +144,7 @@ void tiny_ml_task(void *pvParameters)
             else if (expected == 3) status = "Critical";
         }
 
-        const bool is_safety_triggered = (temperature >= 40.0f || humidity >= 90.0f || soil_moisture < 15.0f || soil_moisture > 60.0f);
+        const bool is_safety_triggered = (temperature >= 40.0f || humidity >= 90.0f);
 
         char log_status_str[64];
         if (is_safety_triggered) {
@@ -166,9 +164,12 @@ void tiny_ml_task(void *pvParameters)
             xSemaphoreGive(ctx->mutexContext);
         }
 
+        char temperature_text[8], humidity_text[8];
+        sensor_format_temperature(temperature_text, sizeof(temperature_text), temperature);
+        sensor_format_humidity(humidity_text, sizeof(humidity_text), humidity);
         serialLogLock();
-        Serial.printf("TinyML T=%.1f°C H=%.1f%% S=%02d%% | rule=%d pred=%d | %s | p=[%.2f,%.2f,%.2f] | %lums | roll_acc=%.1f%% (%lu/%lu)\n",
-                      temperature, humidity, static_cast<int>(soil_moisture), expected, predicted,
+        Serial.printf("TinyML T=%s°C H=%s%% | rule=%d pred=%d | %s | p=[%.2f,%.2f,%.2f] | %lums | roll_acc=%.1f%% (%lu/%lu)\n",
+                      temperature_text, humidity_text, expected, predicted,
                       log_status_str,
                       output->data.f[0], output->data.f[1], output->data.f[2],
                       static_cast<unsigned long>(t1 - t0),

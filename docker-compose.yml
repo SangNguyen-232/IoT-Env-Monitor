@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: ${DB_PASS:?Set DB_PASS in .env}
       POSTGRES_DB: ${DB_NAME:-iot_db}
     volumes:
-      - pgdata18:/var/lib/postgresql
+      - fan_pgdata18:/var/lib/postgresql
       - ./database/schema/base.sql:/docker-entrypoint-initdb.d/01_schema.sql
       - ./database/migrations/001_auth.sql:/docker-entrypoint-initdb.d/02_auth.sql
       - ./database/migrations/003_session_login_at.sql:/docker-entrypoint-initdb.d/03_session_login_at.sql
@@ -96,5 +96,5 @@ networks:
     driver: bridge
 
 volumes:
-  pgdata18:
+  fan_pgdata18:
     driver: local

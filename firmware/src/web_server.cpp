@@ -1,4 +1,5 @@
 #include "web_server.h"
+#include "shared_context.h"
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncTCP.h>
@@ -14,7 +15,8 @@
 #include <string.h>
 #include <time.h>
 #include <vector>
-#include "pump.h"
+#include "fan.h"
+#include "fan_config.h"
 #include "device_config.h"
 #include "message_handler.h"
 #include "secrets.h"
@@ -153,11 +155,10 @@ static bool requireDeviceAuth(AsyncWebServerRequest *request, uint32_t *maxWsSes
 static AsyncWebServer server(80);
 static AsyncWebSocket ws("/ws");
 static bool webserver_isrunning = false;
+static bool webserver_handlers_registered = false;
 
-String global_pump_state = "OFF";
-String global_pump_mode = "AUTO";
-
-static SharedContext *s_ctx = nullptr;
+String global_fan_state = "OFF";
+String global_fan_mode = "AUTO";
 
 static String s_wsToken = "";
 static unsigned long s_wsTokenUntil = 0;
@@ -187,11 +188,6 @@ static void wsSetAuth(uint32_t id, bool on)
         break;
     }
     portEXIT_CRITICAL(&s_wsAuthMux);
-}
-
-void Webserver_init_ctx(SharedContext *ctx)
-{
-    s_ctx = ctx;
 }
 
 void Webserver_sendata(String data)
@@ -236,9 +232,9 @@ static void onEvent(AsyncWebSocket *wsServer, AsyncWebSocketClient *client, AwsE
                 if (!s_wsToken.isEmpty() && tk == s_wsToken && static_cast<long>(millis() - s_wsTokenUntil) < 0) {
                     wsSetAuth(client->id(), true);
                     s_wsToken = "";
-                    if (wsIsAuth(client->id()) && xSemaphoreTake(xMutexPumpControl, pdMS_TO_TICKS(200)) == pdTRUE) {
-                        String initMsg = "{\"pump_state\":\"" + global_pump_state + "\",\"pump_mode\":\"" + global_pump_mode + "\"}";
-                        xSemaphoreGive(xMutexPumpControl);
+                    if (wsIsAuth(client->id()) && xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) == pdTRUE) {
+                        String initMsg = "{\"fan_state\":\"" + global_fan_state + "\",\"fan_mode\":\"" + global_fan_mode + "\"}";
+                        xSemaphoreGive(xMutexFanControl);
                         client->text(initMsg);
                     }
                 }
@@ -250,8 +246,9 @@ static void onEvent(AsyncWebSocket *wsServer, AsyncWebSocketClient *client, AwsE
     }
 }
 
-static void startWebServer()
+static void registerWebServerHandlers()
 {
+    if (webserver_handlers_registered) return;
     ws.onEvent(onEvent);
     server.addHandler(&ws);
 
@@ -288,14 +285,70 @@ static void startWebServer()
             return !(u == "/dashboard.html" ||
                      u.indexOf("info.dat") >= 0 ||
                      u.indexOf("wifi_list.json") >= 0 ||
-                     u.indexOf("server.json") >= 0);
+                     u.indexOf("server.json") >= 0 ||
+                     u.indexOf("fan.json") >= 0);
         });
 
     server.on("/api/status", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
-        request->send(200, "application/json",
-                      String("{\"is_ap_mode\":") + (isAPMode() ? "true" : "false") + "}");
+        if (xMutexFanControl == nullptr ||
+            xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) != pdTRUE) {
+            request->send(503, "text/plain", "fan control unavailable");
+            return;
+        }
+        JsonDocument doc;
+        doc["is_ap_mode"] = isAPMode();
+        doc["fan_state"] = global_fan_state;
+        doc["fan_mode"] = global_fan_mode;
+        xSemaphoreGive(xMutexFanControl);
+        String payload;
+        serializeJson(doc, payload);
+        auto *response = request->beginResponse(200, "application/json", payload);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
     });
+
+    server.on("/api/fan-config", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireDeviceAuth(request)) return;
+        if (xMutexFanControl == nullptr ||
+            xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) != pdTRUE) {
+            request->send(503, "text/plain", "fan control unavailable");
+            return;
+        }
+        const FanConfig config = fan_config;
+        xSemaphoreGive(xMutexFanControl);
+        JsonDocument doc;
+        fan_config_to_json(config, doc);
+        String payload;
+        serializeJson(doc, payload);
+        auto *response = request->beginResponse(200, "application/json", payload);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
+    auto *fanConfigHandler = new AsyncCallbackJsonWebHandler("/api/fan-config",
+        [](AsyncWebServerRequest *request, JsonVariant &json) {
+            if (!requireDeviceAuth(request)) return;
+            FanConfig config;
+            if (!fan_config_from_json(json, config)) {
+                request->send(400, "application/json",
+                    "{\"error\":\"Use numeric temperatures -40..80 C, humidity 0..100%, OFF < ON, activation_logic any or all\"}");
+                return;
+            }
+            if (!fan_save_config(config)) {
+                request->send(503, "application/json", "{\"error\":\"Could not persist FAN settings; previous settings retained\"}");
+                return;
+            }
+            // A subsequent GET provides the canonical persisted values if needed.
+            JsonDocument doc;
+            fan_config_to_json(config, doc);
+            String payload;
+            serializeJson(doc, payload);
+            request->send(200, "application/json", payload);
+        });
+    fanConfigHandler->setMethod(HTTP_POST);
+    fanConfigHandler->setMaxContentLength(512);
+    server.addHandler(fanConfigHandler);
 
     server.on("/api/ws-token", HTTP_GET, [](AsyncWebServerRequest *request) {
         uint32_t sessionDurationMs = 0;
@@ -310,7 +363,7 @@ static void startWebServer()
         request->send(200, "application/json", "{\"token\":\"" + s_wsToken + "\"}");
     });
 
-    server.on("/toggle-pump", HTTP_GET, [](AsyncWebServerRequest *request) {
+    server.on("/toggle-fan", HTTP_GET, [](AsyncWebServerRequest *request) {
         if (!requireDeviceAuth(request)) return;
         String temp_state;
         bool has_param = request->hasParam("state");
@@ -323,25 +376,21 @@ static void startWebServer()
             }
         }
 
-        String current_state, current_mode;
-        if (xSemaphoreTake(xMutexPumpControl, portMAX_DELAY) == pdTRUE) {
-            if (has_param) {
-                global_pump_state = temp_state;
-            } else {
-                global_pump_state = (global_pump_state == "ON") ? "OFF" : "ON";
-            }
-
-            global_pump_mode = "MANUAL";
-            pump_manual_control = true;
-            pump_manual_state = (global_pump_state == "ON");
-
-            current_state = global_pump_state;
-            current_mode = global_pump_mode;
-            xSemaphoreGive(xMutexPumpControl);
+        if (xMutexFanControl == nullptr ||
+            xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) != pdTRUE) {
+            request->send(503, "text/plain", "fan control unavailable");
+            return;
         }
-
-        Webserver_sendata("{\"pump_state\":\"" + current_state + "\",\"pump_mode\":\"" + current_mode + "\"}");
-        request->send(200, "text/plain", current_state);
+        const bool wasRequestedOn = fan_manual_control ? fan_manual_state : global_fan_state == "ON";
+        fan_manual_state = has_param ? temp_state == "ON" : !wasRequestedOn;
+        fan_manual_control = true;
+        global_fan_mode = "MANUAL";
+        const String requestedState = fan_manual_state ? "ON" : "OFF";
+        xSemaphoreGive(xMutexFanControl);
+        // Only task_fan publishes applied output; HTTP acknowledges the request.
+        auto *response = request->beginResponse(202, "text/plain", requestedState);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
     });
 
     server.on("/set-mode", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -358,36 +407,32 @@ static void startWebServer()
         }
 
         String current_state, current_mode;
-        if (xSemaphoreTake(xMutexPumpControl, portMAX_DELAY) == pdTRUE) {
+        if (xMutexFanControl != nullptr && xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) == pdTRUE) {
             if (has_param) {
-                global_pump_mode = temp_mode;
+                global_fan_mode = temp_mode;
             } else {
-                global_pump_mode = (global_pump_mode == "MANUAL") ? "AUTO" : "MANUAL";
+                global_fan_mode = (global_fan_mode == "MANUAL") ? "AUTO" : "MANUAL";
             }
 
-            pump_manual_control = (global_pump_mode == "MANUAL");
-            if (pump_manual_control) {
-                pump_manual_state = (global_pump_state == "ON");
+            fan_manual_control = (global_fan_mode == "MANUAL");
+            if (fan_manual_control) {
+                fan_manual_state = (global_fan_state == "ON");
             }
 
-            current_state = global_pump_state;
-            current_mode = global_pump_mode;
-            xSemaphoreGive(xMutexPumpControl);
+            current_state = global_fan_state;
+            current_mode = global_fan_mode;
+            xSemaphoreGive(xMutexFanControl);
+        } else {
+            request->send(503, "text/plain", "fan control unavailable");
+            return;
         }
 
-        Webserver_sendata("{\"pump_state\":\"" + current_state + "\",\"pump_mode\":\"" + current_mode + "\"}");
+        Webserver_sendata("{\"fan_state\":\"" + current_state + "\",\"fan_mode\":\"" + current_mode + "\"}");
 
-        if (s_ctx != nullptr) {
-            if (xSemaphoreTake(s_ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE) {
-                strncpy(s_ctx->dbTriggerSource, "pump", sizeof(s_ctx->dbTriggerSource) - 1);
-                s_ctx->dbTriggerSource[sizeof(s_ctx->dbTriggerSource) - 1] = '\0';
-                xSemaphoreGive(s_ctx->mutexContext);
-            }
-            g_pumpEventPending = true;
-            xSemaphoreGive(s_ctx->semDBUpdate);
-        }
-
-        request->send(200, "text/plain", current_mode);
+        // task_fan records both mode and applied-output changes in telemetry.
+        auto *response = request->beginResponse(200, "text/plain", current_mode);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
     });
 
     server.on("/api/wifi-list", HTTP_GET, [](AsyncWebServerRequest *request) {
@@ -473,8 +518,16 @@ static void startWebServer()
         }
     });
 
-    server.begin();
     ElegantOTA.begin(&server, DEVICE_HTTP_USER, DEVICE_HTTP_PASS);
+    webserver_handlers_registered = true;
+}
+
+static void startWebServer()
+{
+    // end() stops the listener but retains its handlers. Register them only once
+    // so WiFi reconnects cannot accumulate routes or own the static ws twice.
+    registerWebServerHandlers();
+    server.begin();
     webserver_isrunning = true;
 }
 

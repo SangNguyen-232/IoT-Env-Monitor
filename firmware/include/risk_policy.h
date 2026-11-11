@@ -54,38 +54,21 @@ static inline float calc_penalty_humi(float h)
     return 5.0f + 5.0f * std::min((h - 80.0f) / 15.0f, 1.0f);
 }
 
-static inline float calc_penalty_soil(float s)
+static inline int risk_pure_mathematical_label(float temperature, float humidity)
 {
-    if (s >= 30.0f && s <= 40.0f) {
-        return 0.0f;
-    }
-    if (s >= 25.0f && s < 30.0f) {
-        return 5.0f * ((30.0f - s) / 5.0f);
-    }
-    if (s > 40.0f && s <= 45.0f) {
-        return 5.0f * ((s - 40.0f) / 5.0f);
-    }
-    if (s < 25.0f) {
-        return 5.0f + 5.0f * std::min((25.0f - s) / 20.0f, 1.0f);
-    }
-    return 5.0f + 5.0f * std::min((s - 45.0f) / 15.0f, 1.0f);
-}
-
-static inline int risk_pure_mathematical_label(float temperature, float humidity, float soil_moisture)
-{
-    float r = 0.35f * calc_penalty_temp(temperature) +
-              0.20f * calc_penalty_humi(humidity) +
-              0.45f * calc_penalty_soil(soil_moisture);
+    // Synthetic air-risk rule: normalized temperature/humidity weight ratio 7:4.
+    const float r = (7.0f * calc_penalty_temp(temperature) +
+                     4.0f * calc_penalty_humi(humidity)) / 11.0f;
 
     if (r <= 3.0f) return 1; // Normal
     if (r <= 6.5f) return 2; // Warning
     return 3;                // Critical
 }
 
-static inline int risk_final_safety_label(float temperature, float humidity, float soil_moisture)
+static inline int risk_final_safety_label(float temperature, float humidity)
 {
-    if (temperature >= 40.0f || humidity >= 90.0f || soil_moisture < 15.0f || soil_moisture > 60.0f) {
+    if (temperature >= 40.0f || humidity >= 90.0f) {
         return 3;
     }
-    return risk_pure_mathematical_label(temperature, humidity, soil_moisture);
+    return risk_pure_mathematical_label(temperature, humidity);
 }

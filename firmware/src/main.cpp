@@ -1,6 +1,7 @@
 #include "shared_context.h"
 #include "serial_log.h"
 #include "esp_log.h"
+#include "esp_system.h"
 
 #include "status_led.h"
 #include "rgb_led.h"
@@ -12,19 +13,45 @@
 #include "factory_reset.h"
 #include "wifi_manager.h"
 #include "web_server.h"
-#include "pump.h"
+#include "fan.h"
+#include "fan_config.h"
+
+static const char *resetReasonText(esp_reset_reason_t reason)
+{
+    switch (reason) {
+        case ESP_RST_POWERON: return "POWERON";
+        case ESP_RST_EXT: return "EXTERNAL";
+        case ESP_RST_SW: return "SOFTWARE";
+        case ESP_RST_PANIC: return "PANIC";
+        case ESP_RST_INT_WDT: return "INTERRUPT_WATCHDOG";
+        case ESP_RST_TASK_WDT: return "TASK_WATCHDOG";
+        case ESP_RST_WDT: return "WATCHDOG";
+        case ESP_RST_DEEPSLEEP: return "DEEP_SLEEP";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_SDIO: return "SDIO";
+        default: return "UNKNOWN";
+    }
+}
 
 void setup()
 {
+    fan_init();
     Serial.begin(115200);
     serialLogInit();
+    const esp_reset_reason_t resetReason = esp_reset_reason();
+    Serial.printf("[BOOT] reset_reason=%s (%u), build=%s %s\n",
+                  resetReasonText(resetReason), static_cast<unsigned>(resetReason),
+                  __DATE__, __TIME__);
     esp_log_level_set("*", ESP_LOG_WARN);
     esp_log_level_set("vfs_api", ESP_LOG_NONE);
     check_info_File(false);
+    fan_load_config();
 
     SharedContext *ctx = new SharedContext();
     ctx->temperature = 0.0f;
     ctx->humidity = 0.0f;
+    ctx->dhtSampleValid = false;
+    ctx->dhtSampledAtMs = 0;
     ctx->soilMoisture = 0;
     ctx->soilSampleValid = false;
     ctx->soilSampledAtMs = 0;
@@ -34,19 +61,19 @@ void setup()
     ctx->timestampReal = 0;
     ctx->timestampRealUs = 0;
     ctx->mlRollAcc = 0.0f;
-    strncpy(ctx->dbTriggerSource, "sensor", sizeof(ctx->dbTriggerSource) - 1);
-    ctx->dbTriggerSource[sizeof(ctx->dbTriggerSource) - 1] = '\0';
     ctx->mutexContext = xSemaphoreCreateMutex();
     ctx->semLEDUpdate = xSemaphoreCreateBinary();
     ctx->semNeoUpdate = xSemaphoreCreateBinary();
     ctx->semDBUpdate  = xSemaphoreCreateBinary();
 
-    Webserver_init_ctx(ctx);
-
     xTaskCreate(led_blinky, "Task LED Blink", 2048, (void *)ctx, 2, NULL);
     xTaskCreate(neo_blinky, "Task NEO Blink", 2048, (void *)ctx, 2, NULL);
-    xTaskCreate(temp_humi_monitor, "Task TEMP HUMI Monitor", 2048, (void *)ctx, 2, NULL);
-    xTaskCreate(task_pump, "Task Pump", 2048, (void *)ctx, 2, NULL);
+    // Float formatting, sensor I/O and WebSocket calls need nested stack headroom.
+    if (xTaskCreate(temp_humi_monitor, "Task TEMP HUMI Monitor", 6144,
+                    (void *)ctx, 2, NULL) != pdPASS) {
+        Serial.println("[BOOT] Could not create sensor task");
+    }
+    xTaskCreate(task_fan, "Task Fan", 4096, (void *)ctx, 2, NULL);
     xTaskCreate(tiny_ml_task, "Tiny ML Task", 8192, (void *)ctx, 2, NULL);
     xTaskCreate(task_database, "Task Database", 16384, (void *)ctx, 2, NULL);
     xTaskCreate(Task_Toggle_BOOT, "Task Toggle BOOT", 4096, NULL, 2, NULL);

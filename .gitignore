@@ -18,6 +18,8 @@ backups/
 firmware/data/info.dat
 firmware/data/wifi_list.json
 firmware/data/server.json
+firmware/data/fan.json
+firmware/data/fan.json.tmp
 
 # Dependencies and virtual environments
 .venv/

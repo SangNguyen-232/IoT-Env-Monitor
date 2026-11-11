@@ -1,4 +1,5 @@
 #include "device_config.h"
+#include "fan_config.h"
 #include "LittleFS.h"
 #include "shared_context.h"
 #include "wifi_manager.h"
@@ -24,6 +25,7 @@ static void Load_info_File()
 
 void Delete_info_File()
 {
+    fan_reset_config();
     if (LittleFS.exists("/info.dat")) {
         LittleFS.remove("/info.dat");
     }

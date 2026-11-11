@@ -103,9 +103,25 @@
     return host ? ("http://" + host + "/") : "";
   }
 
-  function fmtTemp(v) { var n = parseFloat(v); return isNaN(n) ? "—" : n.toFixed(2) + "\u00B0C"; }
-  function fmtHumi(v) { var n = parseFloat(v); return isNaN(n) ? "—" : (n >= 99.95 ? "100" : n.toFixed(2)) + "%"; }
-  function fmtSoil(v) { var n = parseFloat(v); if (isNaN(n)) return "—"; var s = Math.round(n); return (s < 10 ? "0" + s : "" + s) + "%"; }
+  function fmtTemp(v) {
+    var n = parseFloat(v);
+    if (!Number.isFinite(n) || n < -40 || n > 80) return "—";
+    var value = Math.round(Math.abs(n) * 10) / 10;
+    if (n < 0 && value !== 0) value = -value;
+    return value.toFixed(1) + "\u00B0C";
+  }
+  function fmtHumi(v) {
+    var n = parseFloat(v);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return "—";
+    var value = Math.round(n * 10) / 10;
+    return (value === 0 ? "00" : String(value)) + "%";
+  }
+  function fmtSoil(v) {
+    var n = parseFloat(v);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return "—";
+    var value = Math.round(n);
+    return (value < 10 ? "0" : "") + value + "%";
+  }
 
   function displayName(deviceId) {
     return deviceId || "Unknown";
@@ -279,13 +295,6 @@
     if (v < 60.0 || v > 70.0) return "val-warning";
     return "val-normal";
   }
-  function soilColorClass(s) {
-    var v = parseFloat(s);
-    if (isNaN(v)) return "val-soil";
-    if (v < 25.0 || v > 45.0) return "val-critical";
-    if (v < 30.0 || v > 40.0) return "val-warning";
-    return "val-normal";
-  }
 
   // ─── Render device cards: only administrators can select devices for deletion ──────
   function renderCard(device) {
@@ -337,7 +346,7 @@
         '</div>' +
         '<div class="sensor-item">' +
           '<span class="sensor-label">Độ ẩm đất</span>' +
-          '<span class="sensor-value js-val-soil ' + soilColorClass(device.soil_moisture) + '">' + escapeHtml(fmtSoil(device.soil_moisture)) + '</span>' +
+          '<span class="sensor-value js-val-soil val-soil">' + escapeHtml(fmtSoil(device.soil_moisture)) + '</span>' +
         '</div>' +
       '</div>' +
       '<div class="card-footer">' +

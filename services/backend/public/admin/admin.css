@@ -213,7 +213,7 @@ html, body {
 /* ─── Sensor row inside card ─── */
 .sensor-row {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 14px;
 }
@@ -234,7 +234,7 @@ html, body {
 }
 .val-temp { color: var(--orange); }
 .val-humi { color: var(--blue); }
-.val-soil { color: var(--green); }
+.val-soil { color: var(--muted); }
 .val-normal   { color: var(--green); }
 .val-warning  { color: var(--orange); }
 .val-critical { color: var(--red); }
@@ -305,7 +305,6 @@ html, body {
 }
 @media (max-width: 480px) {
   .summary-bar { grid-template-columns: 1fr; }
-  .sensor-row  { grid-template-columns: repeat(3, 1fr); }
   .admin-wrap  { padding: 18px 16px 48px; }
 }
 

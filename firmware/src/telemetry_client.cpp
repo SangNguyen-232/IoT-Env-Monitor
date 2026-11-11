@@ -7,9 +7,10 @@
 #include <WiFiClientSecure.h>
 #include "shared_context.h"
 #include "serial_log.h"
+#include "sensor_format.h"
 #include "web_server.h"
 #include "device_config.h"
-#include "pump.h"
+#include "fan.h"
 #include "secrets.h"
 #include <sys/time.h>
 
@@ -19,7 +20,7 @@ static String postQueue[POST_QUEUE_MAX];
 static int postQHead = 0;
 static int postQCount = 0;
 static unsigned long s_lastDBPostMs_sensor = 0;
-static unsigned long s_lastDBPostMs_pump = 0;
+static unsigned long s_lastDBPostMs_fan = 0;
 
 static String formatTimestamp(time_t t)
 {
@@ -140,12 +141,15 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     float temperature = 0.0f;
     float humidity = 0.0f;
     int soilMoisture = 0;
-    bool soilValid = false;
+    bool soilSampleValid = false;
+    uint32_t soilSampledAtMs = 0;
+    bool dhtSampleValid = false;
+    uint32_t dhtSampledAtMs = 0;
     int lcdState = 1;
     float mlRollAcc = 0.0f;
     struct timeval tvReal = {0, 0};
     struct timeval tvUp   = {0, 0};
-    String pumpState;
+    String fanState;
     String modeState;
 
     if (ctx != NULL && xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(2000)) == pdTRUE)
@@ -153,7 +157,10 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
         temperature    = ctx->temperature;
         humidity       = ctx->humidity;
         soilMoisture   = ctx->soilMoisture;
-        soilValid      = ctx->soilSampleValid;
+        soilSampleValid = ctx->soilSampleValid;
+        soilSampledAtMs = ctx->soilSampledAtMs;
+        dhtSampleValid  = ctx->dhtSampleValid;
+        dhtSampledAtMs  = ctx->dhtSampledAtMs;
         lcdState       = ctx->lcdState;
         mlRollAcc      = ctx->mlRollAcc;
         tvReal.tv_sec  = ctx->timestampReal;
@@ -163,11 +170,11 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
         return String();
     }
 
-    if (xSemaphoreTake(xMutexPumpControl, pdMS_TO_TICKS(2000)) == pdTRUE)
+    if (xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(2000)) == pdTRUE)
     {
-        pumpState = global_pump_state;
-        modeState = global_pump_mode;
-        xSemaphoreGive(xMutexPumpControl);
+        fanState = global_fan_state;
+        modeState = global_fan_mode;
+        xSemaphoreGive(xMutexFanControl);
     } else {
         return String();
     }
@@ -179,22 +186,32 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     const int64_t latencyUs = (((int64_t)tvUp.tv_sec * 1000000LL + tvUp.tv_usec)
                           - ((int64_t)tvReal.tv_sec * 1000000LL + tvReal.tv_usec));
     JsonDocument doc;
+    char temperatureJson[24], humidityJson[24];
     if (tvReal.tv_sec >= 1577836800) doc["timestamp_real"] = formatTimestamp(tvReal.tv_sec);
     else doc["timestamp_real"] = nullptr;
     doc["timestamp_up"] = formatTimestamp(tvUp.tv_sec);
-    const bool dhtValid = isfinite(temperature) && isfinite(humidity) && humidity >= 0.0f;
+    const bool dhtValid = dht_sample_values_are_valid(temperature, humidity) &&
+        dht_sample_is_fresh(dhtSampleValid, dhtSampledAtMs, millis());
     if (dhtValid) {
-        doc["temperature"] = temperature;
-        doc["humidity"] = humidity;
+        // Preserve the sampled float value across JSON transport; round only in the UI.
+        sensor_format_json_number(temperatureJson, sizeof(temperatureJson), temperature);
+        sensor_format_json_number(humidityJson, sizeof(humidityJson), humidity);
+        doc["temperature"] = serialized(temperatureJson);
+        doc["humidity"] = serialized(humidityJson);
     } else {
         doc["temperature"] = nullptr;
         doc["humidity"] = nullptr;
     }
-    if (soilValid) doc["soil_moisture"] = soilMoisture;
-    else doc["soil_moisture"] = nullptr;
-    doc["PUMP_state"] = pumpState;
+    if (soil_sample_is_fresh(soilSampleValid, soilSampledAtMs, millis()) &&
+        soilMoisture >= 0 && soilMoisture <= 100) {
+        doc["soil_moisture"] = soilMoisture;
+    } else {
+        doc["soil_moisture"] = nullptr;
+    }
+    doc["FAN_state"] = fanState;
     doc["MODE_state"] = modeState;
-    doc["Message"] = ruleStatusLabel(lcdState);
+    if (dhtValid) doc["Message"] = ruleStatusLabel(lcdState);
+    else doc["Message"] = nullptr;
     // Score is model/rule agreement (%), not a risk score or held-out accuracy.
     doc["Score"] = String(mlRollAcc, 2) + "%";
     doc["device_id"] = WiFi.macAddress();
@@ -212,44 +229,42 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
 void task_database(void *pvParameters)
 {
     SharedContext *ctx = static_cast<SharedContext *>(pvParameters);
+    uint32_t waitMs = 5000U;
 
     while (1)
     {
-        const bool gotEvent = xSemaphoreTake(ctx->semDBUpdate, pdMS_TO_TICKS(5000)) == pdTRUE;
-
-        if (gotEvent)
+        const bool gotEvent = xSemaphoreTake(ctx->semDBUpdate, pdMS_TO_TICKS(waitMs)) == pdTRUE;
+        bool fanEvent = false;
+        bool shouldPost = false;
+        const uint32_t now = millis();
+        waitMs = 5000U;
+        if (xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE)
         {
-            char triggerSource[8] = "sensor";
-            if (ctx != NULL && xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE)
-            {
-                strncpy(triggerSource, ctx->dbTriggerSource, sizeof(triggerSource) - 1);
-                triggerSource[sizeof(triggerSource) - 1] = '\0';
-                xSemaphoreGive(ctx->mutexContext);
+            // A newer sensor snapshot must not overwrite a pending FAN event.
+            fanEvent = g_fanEventPending;
+            const uint32_t lastPost = fanEvent ? s_lastDBPostMs_fan : s_lastDBPostMs_sensor;
+            shouldPost = (gotEvent || fanEvent) && static_cast<uint32_t>(now - lastPost) >= 200U;
+            if (fanEvent) {
+                if (shouldPost) g_fanEventPending = false;
+                else waitMs = 200U;
             }
+            xSemaphoreGive(ctx->mutexContext);
+        }
 
-            unsigned long minGap      = 200UL;
-            unsigned long lastPostMs  = (strcmp(triggerSource, "pump") == 0)
-                                        ? s_lastDBPostMs_pump
-                                        : s_lastDBPostMs_sensor;
-            if (millis() - lastPostMs >= minGap)
-            {
-                if (strcmp(triggerSource, "pump") == 0)
-                {
-                    g_pumpEventPending = false;
+        if (shouldPost)
+        {
+            const String payload = buildPayload(ctx, fanEvent ? "fan" : "sensor");
+            if (!payload.isEmpty()) {
+                enqueuePost(payload);
+                if (fanEvent) s_lastDBPostMs_fan = millis();
+                else s_lastDBPostMs_sensor = millis();
+            } else if (fanEvent) {
+                // Retain the event if a complete snapshot/time was unavailable.
+                if (xSemaphoreTake(ctx->mutexContext, portMAX_DELAY) == pdTRUE) {
+                    g_fanEventPending = true;
+                    xSemaphoreGive(ctx->mutexContext);
                 }
-
-                const bool skipSensorForPump =
-                    strcmp(triggerSource, "sensor") == 0 &&
-                    (g_pumpEventPending || millis() - s_lastDBPostMs_pump < 200UL);
-
-                if (!skipSensorForPump)
-                {
-                    enqueuePost(buildPayload(ctx, triggerSource));
-                    if (strcmp(triggerSource, "pump") == 0)
-                        s_lastDBPostMs_pump   = millis();
-                    else
-                        s_lastDBPostMs_sensor = millis();
-                }
+                waitMs = 200U;
             }
         }
 

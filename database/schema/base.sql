@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS "sensor_logs" (
   "temperature" double precision,
   "humidity" double precision,
   "soil_moisture" double precision,
-  "PUMP_state" text,
+  "FAN_state" text,
   "MODE_state" text,
   "Message" text,
   "Score" text,

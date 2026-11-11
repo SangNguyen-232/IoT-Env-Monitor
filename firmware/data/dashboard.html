@@ -64,7 +64,7 @@
           </div>
           <div class="stat-label">Soil moisture</div>
         </div>
-        <div class="stat-value" id="statSoil">--%</div>
+        <div class="stat-value val-soil" id="statSoil">--%</div>
       </div>
 
       <div class="stat-card">
@@ -84,7 +84,7 @@
           </div>
           <div class="stat-label">Notification</div>
         </div>
-        <div class="stat-sub" id="statMessage">--</div>
+        <div class="stat-sub unknown" id="statMessage">--</div>
       </div>
     </section>
 
@@ -123,9 +123,9 @@
 
     <div class="controls-row">
       <section class="control-row">
-        <span class="control-label">PUMP</span>
-        <span class="badge badge-pump off" id="pumpBadge">OFF</span>
-        <button class="btn-toggle" id="pumpToggleBtn">Toggle</button>
+        <span class="control-label">FAN</span>
+        <span class="badge badge-fan off" id="fanBadge">OFF</span>
+        <button class="btn-toggle" id="fanToggleBtn">Toggle</button>
       </section>
 
       <section class="control-row">
@@ -134,6 +134,43 @@
         <button class="btn-toggle" id="modeToggleBtn">Toggle</button>
       </section>
     </div>
+    <p id="controlStatus" class="control-status" role="status" aria-live="polite"></p>
+
+    <section class="card fan-config-card" aria-labelledby="fanConfigTitle">
+      <div class="card-header">
+        <h2 id="fanConfigTitle">Cấu hình FAN tự động</h2>
+      </div>
+      <p class="fan-config-help">Nhập ngưỡng nhiệt độ và độ ẩm không khí cho chế độ AUTO. Mỗi ngưỡng TẮT phải thấp hơn ngưỡng BẬT để tránh relay bật/tắt liên tục.</p>
+      <form id="fanConfigForm">
+        <fieldset id="fanConfigFields" disabled>
+          <legend class="sr-only">Ngưỡng điều khiển FAN</legend>
+          <div class="fan-config-grid">
+            <label for="fanTemperatureOn">Nhiệt độ BẬT (&deg;C)
+              <input id="fanTemperatureOn" type="number" min="-40" max="80" step="any" required inputmode="decimal" />
+            </label>
+            <label for="fanTemperatureOff">Nhiệt độ TẮT (&deg;C)
+              <input id="fanTemperatureOff" type="number" min="-40" max="80" step="any" required inputmode="decimal" />
+            </label>
+            <label for="fanHumidityOn">Độ ẩm không khí BẬT (%)
+              <input id="fanHumidityOn" type="number" min="0" max="100" step="any" required inputmode="decimal" />
+            </label>
+            <label for="fanHumidityOff">Độ ẩm không khí TẮT (%)
+              <input id="fanHumidityOff" type="number" min="0" max="100" step="any" required inputmode="decimal" />
+            </label>
+          </div>
+          <label class="fan-logic-label" for="fanActivationLogic">Điều kiện BẬT
+            <select id="fanActivationLogic" aria-describedby="fanLogicDescription">
+              <option value="any">Nhiệt độ HOẶC độ ẩm (OR)</option>
+              <option value="all">Nhiệt độ VÀ độ ẩm (AND)</option>
+            </select>
+          </label>
+          <p id="fanLogicDescription" class="fan-config-help">BẬT khi nhiệt độ ≥ ngưỡng BẬT HOẶC độ ẩm ≥ ngưỡng BẬT. TẮT khi nhiệt độ ≤ ngưỡng TẮT VÀ độ ẩm ≤ ngưỡng TẮT. Giữ trạng thái hiện tại trong vùng còn lại.</p>
+          <button class="btn-toggle" id="fanConfigSaveBtn" type="submit">Lưu cấu hình FAN</button>
+        </fieldset>
+      </form>
+      <p id="fanConfigStatus" class="settings-msg" role="status" aria-live="polite">Đang tải cấu hình FAN...</p>
+      <p class="fan-config-help">AUTO giữ FAN OFF nếu chưa lưu cấu hình hợp lệ hoặc dữ liệu DHT20 bị lỗi/quá hạn. Cấu hình được lưu trên thiết bị và giữ lại sau khi khởi động lại.</p>
+    </section>
   </main>
 
     <!-- Settings Modal: Wi-Fi Configuration -->
