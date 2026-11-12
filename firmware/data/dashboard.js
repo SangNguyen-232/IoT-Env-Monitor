@@ -4,10 +4,23 @@
   var MAX_POINTS = 60;
   var DEFAULT_LAT = 12.6951778;
   var DEFAULT_LNG = 108.057041;
+  var FAN_MODES = ["AUTO", "SHADOW", "AI", "MANUAL"];
+  var STALE_MS = 15000;
 
   var state = {
-    fanState: "OFF",
-    fanMode: "AUTO",
+    fanState: null,
+    fanMode: null,
+    lastFanAt: 0,
+    lastSensorAt: 0,
+    controlPending: false,
+    controlRevision: 0,
+    modeSelectionDirty: false,
+    requestedMode: null,
+    modeRequestedAt: 0,
+    ai: null,
+    aiKey: null,
+    aiAt: 0,
+    bootId: null,
   };
 
   // ---------- DOM refs ----------
@@ -19,8 +32,12 @@
     message: document.getElementById("statMessage"),
     fanBadge: document.getElementById("fanBadge"),
     modeBadge: document.getElementById("modeBadge"),
+    fanSettingsBadge: document.getElementById("fanSettingsBadge"),
+    modeSettingsBadge: document.getElementById("modeSettingsBadge"),
     fanToggleBtn: document.getElementById("fanToggleBtn"),
-    modeToggleBtn: document.getElementById("modeToggleBtn"),
+    modeApplyBtn: document.getElementById("modeApplyBtn"),
+    modeSelect: document.getElementById("modeSelect"),
+    fanReason: document.getElementById("fanReason"),
     controlStatus: document.getElementById("controlStatus"),
   };
 
@@ -313,18 +330,19 @@
   }
 
   // ---------- Map ----------
+  var mapInstance = null;
   function initMap() {
     if (typeof L === "undefined") {
       console.warn("Không tải được Leaflet (Chế độ offline)");
       return;
     }
 
-    var map = L.map("map", { zoomControl: true, attributionControl: true }).setView([DEFAULT_LAT, DEFAULT_LNG], 15);
+    mapInstance = L.map("map", { zoomControl: true, attributionControl: true }).setView([DEFAULT_LAT, DEFAULT_LNG], 15);
     L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: "&copy; OpenStreetMap contributors",
-    }).addTo(map);
-    L.marker([DEFAULT_LAT, DEFAULT_LNG]).addTo(map);
+    }).addTo(mapInstance);
+    L.marker([DEFAULT_LAT, DEFAULT_LNG]).addTo(mapInstance);
   }
 
   // ---------- Badges ----------
@@ -332,19 +350,142 @@
     state.fanState = on ? "ON" : "OFF";
     els.fanBadge.textContent = state.fanState;
     els.fanBadge.className = "badge badge-fan " + (on ? "on" : "off");
+    els.fanSettingsBadge.textContent = state.fanState;
+    els.fanSettingsBadge.className = els.fanBadge.className;
   }
 
   function setModeBadge(mode) {
     state.fanMode = mode;
     els.modeBadge.textContent = mode;
-    els.modeBadge.className = "badge badge-mode " + (mode === "MANUAL" ? "manual" : "auto");
+    els.modeBadge.className = "badge badge-mode " + mode.toLowerCase();
+    els.modeSettingsBadge.textContent = mode;
+    els.modeSettingsBadge.className = els.modeBadge.className;
+    if (state.requestedMode === mode) state.requestedMode = null;
+    if (!state.modeSelectionDirty && !state.requestedMode) els.modeSelect.value = mode;
+    syncControls();
+  }
+
+  function syncControls() {
+    var fresh = state.lastFanAt && Date.now() - state.lastFanAt < STALE_MS;
+    els.fanToggleBtn.disabled = state.controlPending || !fresh || state.fanMode !== "MANUAL";
+    els.fanToggleBtn.title = state.fanMode === "MANUAL" ? "Đổi lệnh quạt ON/OFF" : "Chọn và áp dụng MANUAL trước";
+    els.modeApplyBtn.disabled = state.controlPending || !fresh;
+    els.modeSelect.disabled = state.controlPending;
+  }
+
+  function reasonLabel(reason) {
+    var labels = {
+      control_unavailable: "Chưa có trạng thái điều khiển",
+      manual_on: "Lệnh bật thủ công", manual_off: "Lệnh tắt thủ công", manual_timeout: "Hết thời hạn bật thủ công",
+      config_required: "Cần lưu cấu hình ngưỡng", sensor_invalid: "Dữ liệu cảm biến lỗi hoặc quá hạn",
+      mode_changed: "Đã đổi chế độ; tắt quạt và chờ chu kỳ điều khiển",
+      ai_on: "AI đề xuất bật", ai_off: "AI đề xuất tắt", ai_hold: "AI đề xuất giữ trạng thái",
+      rule_on: "Luật ngưỡng yêu cầu bật", rule_off: "Luật ngưỡng yêu cầu tắt",
+      min_on_time: "Giữ ON đủ thời gian tối thiểu", min_off_time: "Giữ OFF đủ thời gian tối thiểu",
+      ai_fallback_low_score: "Dùng luật dự phòng: softmax chưa đạt 0,8",
+      ai_fallback_profile_mismatch: "Dùng luật dự phòng: ngưỡng hoặc điều kiện BẬT đã lưu chưa khớp profile của mô hình"
+    };
+    if (labels[reason]) return labels[reason];
+    if (typeof reason === "string" && reason.indexOf("ai_fallback_") === 0) {
+      return "Dùng luật dự phòng: " + aiStatusLabel(reason.slice(12));
+    }
+    return typeof reason === "string" ? reason : "Chưa có lý do điều khiển";
+  }
+
+  function applyFanSnapshot(data) {
+    if ((data.fan_state !== "ON" && data.fan_state !== "OFF") || FAN_MODES.indexOf(data.fan_mode) === -1) return;
+    state.lastFanAt = Date.now();
+    setFanBadge(data.fan_state === "ON");
+    setModeBadge(data.fan_mode);
+    if (typeof data.fan_reason === "string") els.fanReason.textContent = "Bộ điều khiển: " + reasonLabel(data.fan_reason) + ".";
+    syncControls();
+  }
+
+  function aiStatusLabel(status) {
+    return ({ loading: "Đang tải mô hình", ready: "Có kết quả", sensor_invalid: "Cảm biến không hợp lệ",
+      out_of_domain: "Ngoài miền mô hình", inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
+      stale: "Kết quả quá hạn", offline: "Chưa có kết nối", unavailable: "Chưa có dữ liệu AI" })[status] || "Trạng thái chưa xác định";
+  }
+
+  function aiClassLabel(value) {
+    return ({ OFF: "OFF · Tắt", HOLD: "HOLD · Giữ", ON: "ON · Bật" })[value] || "—";
+  }
+
+  function renderAI() {
+    var ai = state.ai;
+    var status = ai ? ai.status : "loading";
+    if (ai && (!state.aiAt || Date.now() - state.aiAt >= STALE_MS)) status = "stale";
+    var ready = status === "ready";
+    var statusEl = document.getElementById("aiStatus");
+    statusEl.textContent = aiStatusLabel(status);
+    statusEl.className = "ai-status" + (ready ? " ready" : " pending");
+    document.getElementById("aiProposal").textContent = ready ? aiClassLabel(ai.predicted_class) : "—";
+    document.getElementById("aiTeacher").textContent = ai && status !== "stale" ? aiClassLabel(ai.rule_class) : "—";
+    var count = ai && Number.isInteger(ai.evaluated_samples) && ai.evaluated_samples >= 0 ? ai.evaluated_samples : 0;
+    document.getElementById("aiAgreement").textContent = ai && count > 0 && validDisplayValue(ai.agreement_pct, 0, 100)
+      ? ai.agreement_pct.toFixed(1) + "% · " + count + " mẫu" : "Chưa có mẫu đối chiếu";
+    var probs = ready && Array.isArray(ai.probabilities) && ai.probabilities.length === 3 && ai.probabilities.every(function (p) {
+      return validDisplayValue(p, 0, 1);
+    }) ? ai.probabilities : null;
+    document.getElementById("aiProbabilities").textContent = "Softmax OFF / HOLD / ON: " + (probs
+      ? probs.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") + " · chưa hiệu chuẩn độ tin cậy" : "—");
+    document.getElementById("aiModel").textContent = "Mô hình: " + (ai && typeof ai.model_version === "string" ? ai.model_version : "—");
+    var latency = ready && validDisplayValue(ai.inference_ms, 0, 60000) ? " · suy luận " + ai.inference_ms.toFixed(1) + " ms" : "";
+    document.getElementById("aiSample").textContent = ai
+      ? "Phiên " + (state.bootId || "—") + " · mẫu AI " + (Number.isInteger(ai.sample_seq) ? ai.sample_seq : "—") + latency + (status === "stale" ? " · cần dữ liệu mới" : "")
+      : "Chưa nhận kết quả suy luận.";
+  }
+
+  function applyAI(data) {
+    if (!data.ai || typeof data.ai !== "object" || Array.isArray(data.ai)) return;
+    var ai = data.ai;
+    var bootId = typeof data.boot_id === "string" ? data.boot_id : state.bootId;
+    if (ai.status === "ready" && (!data.boot_id || !Number.isInteger(data.sample_seq) ||
+        !Number.isInteger(data.sampled_uptime_ms) || ai.sample_seq !== data.sample_seq ||
+        ai.sampled_uptime_ms !== data.sampled_uptime_ms)) {
+      // Do not associate an older inference with a different sensor snapshot.
+      ai = Object.assign({}, ai, { status: "stale", predicted_class: null, rule_class: null, probabilities: null });
+    }
+    var key = String(bootId) + ":" + ai.sample_seq + ":" + ai.sampled_uptime_ms + ":" + ai.status;
+    if (key !== state.aiKey) {
+      state.aiKey = key;
+      state.aiAt = Date.now();
+    }
+    state.bootId = bootId;
+    state.ai = ai;
+    renderAI();
+  }
+
+  function checkFreshness() {
+    if (state.requestedMode && Date.now() - state.modeRequestedAt >= STALE_MS) {
+      els.controlStatus.textContent = "Chưa xác nhận thiết bị áp dụng " + state.requestedMode + ". Kiểm tra trạng thái rồi thử lại.";
+      state.requestedMode = null;
+    }
+    if (state.lastFanAt && Date.now() - state.lastFanAt >= STALE_MS) {
+      els.fanBadge.textContent = "—";
+      els.modeBadge.textContent = "—";
+      els.fanSettingsBadge.textContent = "—";
+      els.modeSettingsBadge.textContent = "—";
+      els.fanReason.textContent = "Trạng thái điều khiển quá hạn; đang chờ kết nối thiết bị.";
+    }
+    if (state.lastSensorAt && Date.now() - state.lastSensorAt >= STALE_MS) {
+      els.temp.textContent = "--°C";
+      els.humi.textContent = "--%";
+      els.soil.textContent = "--%";
+      els.temp.className = "stat-value";
+      els.humi.className = "stat-value";
+      els.message.textContent = "Dữ liệu quá hạn";
+      els.message.className = "stat-sub unknown";
+    }
+    syncControls();
+    renderAI();
   }
 
   // ---------- WebSocket ----------
   var activeWs = null;
 
   function connectWS() {
-    var url = "ws://" + window.location.host + "/ws";
+    var url = (window.location.protocol === "https:" ? "wss://" : "ws://") + window.location.host + "/ws";
     var ws = new WebSocket(url);
     activeWs = ws;
 
@@ -361,6 +502,7 @@
         return Object.prototype.hasOwnProperty.call(data, key);
       });
       if (hasSensorSnapshot) {
+        state.lastSensorAt = Date.now();
         function sampleValue(value, min, max) {
           return typeof value === "number" && Number.isFinite(value) && value >= min && value <= max
             ? value : null;
@@ -383,14 +525,8 @@
         }
       }
 
-      if (typeof data.fan_state === "string") {
-        var fanState = data.fan_state.toUpperCase();
-        if (fanState === "ON" || fanState === "OFF") setFanBadge(fanState === "ON");
-      }
-      if (typeof data.fan_mode === "string") {
-        var fanMode = data.fan_mode.toUpperCase();
-        if (fanMode === "AUTO" || fanMode === "MANUAL") setModeBadge(fanMode);
-      }
+      applyFanSnapshot(data);
+      applyAI(data);
 
       if (hasSensorSnapshot || Object.prototype.hasOwnProperty.call(data, "lcd_state")) {
         var lcdLabelMap = { 1: "Normal", 2: "Warning", 3: "Critical" };
@@ -432,18 +568,15 @@
 
   // ---------- Status poll (AP mode overlay and relay state reconciliation) ----------
   function pollStatus() {
-    fetch("/api/status")
+    var revision = state.controlRevision;
+    fetch("/api/status", { cache: "no-store" })
       .then(function (r) {
         if (!r.ok) throw new Error("HTTP " + r.status);
         return r.json();
       })
       .then(function (s) {
-        if (s.fan_state === "ON" || s.fan_state === "OFF") {
-          setFanBadge(s.fan_state === "ON");
-        }
-        if (s.fan_mode === "AUTO" || s.fan_mode === "MANUAL") {
-          setModeBadge(s.fan_mode);
-        }
+        if (revision !== state.controlRevision) return;
+        applyFanSnapshot(s);
         var apOverlay = document.getElementById("apModeOverlay");
         if (apOverlay) {
           apOverlay.style.display = s.is_ap_mode ? "flex" : "none";
@@ -452,16 +585,42 @@
       .catch(function () {});
   }
 
+  function pollAIStatus() {
+    var revision = state.controlRevision;
+    fetch("/api/ai-status", { cache: "no-store" })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (revision !== state.controlRevision) return;
+        applyFanSnapshot(data);
+        applyAI(data);
+      })
+      .catch(function () {
+        if (!state.ai) {
+          state.ai = { status: "unavailable" };
+          state.aiAt = Date.now();
+        }
+        renderAI();
+      });
+  }
+
   // ---------- Toggle buttons ----------
   function requestControl(url, allowedValues, onSuccess) {
-    els.fanToggleBtn.disabled = true;
-    els.modeToggleBtn.disabled = true;
+    state.controlPending = true;
+    state.controlRevision += 1;
+    syncControls();
     els.controlStatus.textContent = "";
 
     fetch(url)
       .then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
-        return r.text();
+        return r.text().then(function (body) {
+          if (!r.ok) throw new Error(r.status === 400 || r.status === 409
+            ? "Thiết bị từ chối yêu cầu. AI/SHADOW cần cấu hình ngưỡng dự phòng hợp lệ; lệnh quạt cần MANUAL."
+            : "Không xác nhận được lệnh (HTTP " + r.status + ").");
+          return body;
+        });
       })
       .then(function (txt) {
         var value = txt.trim().toUpperCase();
@@ -472,27 +631,36 @@
       })
       .catch(function (err) {
         console.warn("Không xác nhận được lệnh điều khiển: ", err);
-        els.controlStatus.textContent = "Không xác nhận được lệnh. Kiểm tra kết nối và trạng thái thiết bị.";
+        els.controlStatus.textContent = err.message || "Không xác nhận được lệnh. Kiểm tra kết nối và trạng thái thiết bị.";
       })
       .then(function () {
-        els.fanToggleBtn.disabled = false;
-        els.modeToggleBtn.disabled = false;
+        state.controlPending = false;
+        syncControls();
       });
   }
 
   els.fanToggleBtn.addEventListener("click", function () {
+    if (state.fanMode !== "MANUAL") return;
     var nextState = state.fanState === "ON" ? "OFF" : "ON";
     requestControl("/toggle-fan?state=" + nextState, ["ON", "OFF"], function () {
-      setModeBadge("MANUAL");
+      els.controlStatus.textContent = "Đã gửi yêu cầu quạt " + nextState + "; đang chờ trạng thái thiết bị.";
       // The response acknowledges the requested state; telemetry reports GPIO state.
       pollStatus();
     });
   });
 
-  els.modeToggleBtn.addEventListener("click", function () {
-    var nextMode = state.fanMode === "MANUAL" ? "AUTO" : "MANUAL";
-
-    requestControl("/set-mode?mode=" + nextMode, ["AUTO", "MANUAL"], setModeBadge);
+  els.modeSelect.addEventListener("change", function () { state.modeSelectionDirty = true; });
+  els.modeApplyBtn.addEventListener("click", function () {
+    var nextMode = els.modeSelect.value;
+    if (FAN_MODES.indexOf(nextMode) === -1) return;
+    requestControl("/set-mode?mode=" + encodeURIComponent(nextMode), FAN_MODES, function (mode) {
+      state.modeSelectionDirty = false;
+      state.requestedMode = mode;
+      state.modeRequestedAt = Date.now();
+      els.controlStatus.textContent = "Đã gửi yêu cầu " + mode + "; đang chờ trạng thái thiết bị.";
+      pollStatus();
+      pollAIStatus();
+    });
   });
 
   // ---------- Fan AUTO configuration ----------
@@ -550,7 +718,7 @@
     updateFanLogicDescription();
     setFanConfigStatus(config.configured
       ? "Đang dùng cấu hình FAN đã lưu trên thiết bị."
-      : "Chưa cấu hình: AUTO giữ FAN OFF. Nhập các ngưỡng rồi lưu để kích hoạt AUTO.");
+      : "Chưa cấu hình: AUTO giữ FAN OFF; chưa thể bật AI/SHADOW. Nhập và lưu các ngưỡng dự phòng.");
   }
 
   function loadFanConfig() {
@@ -600,7 +768,7 @@
       .then(function (saved) {
         if (!saved || saved.configured !== true) throw new Error("Configuration was not saved");
         showFanConfig(saved);
-        setFanConfigStatus("Đã lưu cấu hình FAN. Ngưỡng mới áp dụng trong chế độ AUTO và được giữ sau khi khởi động lại.", "success");
+        setFanConfigStatus("Đã lưu ngưỡng cho AUTO / SHADOW và dự phòng cho AI. Cấu hình được giữ sau khi khởi động lại.", "success");
         pollStatus();
       })
       .catch(function (err) {
@@ -611,10 +779,6 @@
   });
 
   // ---------- WiFi list management ----------
-  function escapeAttr(str) {
-    return String(str).replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
-  }
-
   function switchWifiNetwork(ssid, btn) {
     if (btn) btn.disabled = true;
     fetch("/api/wifi-switch", {
@@ -622,12 +786,15 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ ssid: ssid })
     })
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
       .then(function (data) {
         if (btn) btn.disabled = false;
-        if (data.ok && wifiSettingsMsg) {
-          wifiSettingsMsg.textContent = "Đang chuyển sang \"" + ssid + "\"...";
-        }
+        wifiSettingsMsg.textContent = data.ok
+          ? "Đang chuyển sang \"" + ssid + "\"..."
+          : "Thiết bị chưa xác nhận chuyển mạng. Vui lòng thử lại.";
       })
       .catch(function () {
         if (btn) btn.disabled = false;
@@ -638,71 +805,140 @@
   function loadAndRenderWifiList() {
     var container = document.getElementById("wifiListSection");
     if (!container) return;
-    container.innerHTML = "<div style=\"font-size:12px;color:var(--text-muted);\">Đang tải...</div>";
+    container.textContent = "Đang tải mạng WiFi đã lưu...";
+    var refreshButton = document.getElementById("wifiRefreshBtn");
+    refreshButton.disabled = true;
     fetch("/api/wifi-list")
-      .then(function (r) { return r.json(); })
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
       .then(function (list) {
         if (!Array.isArray(list) || list.length === 0) {
-          container.innerHTML = "<div style=\"font-size:12px;color:var(--text-muted);padding-bottom:10px;\">Chưa có mạng đã lưu.</div>";
+          container.textContent = "Chưa có mạng đã lưu.";
           return;
         }
-        var html = "<div style=\"font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px;\">Mạng WiFi đã lưu</div>";
+        container.textContent = "";
+        var heading = document.createElement("h3");
+        heading.textContent = "Mạng WiFi đã lưu";
+        container.appendChild(heading);
         list.forEach(function (item) {
-          html += "<div style=\"display:flex;align-items:center;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--border);\">"
-            + "<span style=\"font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:180px;\">" + escapeAttr(item.ssid) + "</span>"
-            + "<button class=\"btn-toggle\" style=\"padding:4px 12px;font-size:12px;flex-shrink:0;\""
-            + " data-ssid=\"" + escapeAttr(item.ssid) + "\">Chuyển</button>"
-            + "</div>";
-        });
-        container.innerHTML = html;
-        container.querySelectorAll("button[data-ssid]").forEach(function (btn) {
+          if (!item || typeof item.ssid !== "string") return;
+          var row = document.createElement("div");
+          row.className = "wifi-network-row";
+          var name = document.createElement("span");
+          name.textContent = item.ssid;
+          var btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "btn-toggle";
+          btn.textContent = "Chuyển";
+          btn.setAttribute("aria-label", "Chuyển sang " + item.ssid);
           btn.addEventListener("click", function () {
-            switchWifiNetwork(btn.getAttribute("data-ssid"), btn);
+            switchWifiNetwork(item.ssid, btn);
           });
+          row.appendChild(name);
+          row.appendChild(btn);
+          container.appendChild(row);
         });
       })
       .catch(function () {
-        container.innerHTML = "<div style=\"font-size:12px;color:var(--red);\">Không tải được danh sách.</div>";
+        container.textContent = "Không tải được danh sách. Bấm Làm mới danh sách để thử lại.";
+      })
+      .then(function () { refreshButton.disabled = false; });
+  }
+
+  // ---------- Settings views (navigation never reconstructs unsaved forms) ----------
+  var settingsNavBtn = document.getElementById("settingsNavBtn");
+  var settingsSubnav = document.getElementById("settingsSubnav");
+  var wifiSettingsForm = document.getElementById("wifiSettingsForm");
+  var wifiSettingsMsg = document.getElementById("wifiSettingsMsg");
+  var wifiSettingsLoaded = false;
+  var serverUrlDirty = false;
+  var fanSettingsLoaded = false;
+  var viewRoutes = { dashboard: "#dashboard", wifi: "#settings/wifi", fan: "#settings/fan", tinyml: "#settings/tinyml" };
+  var viewTitles = { dashboard: "Dashboard", wifi: "Settings · Cấu hình WiFi", fan: "Settings · Cấu hình FAN", tinyml: "Settings · TinyML" };
+
+  function loadWifiSettings() {
+    if (wifiSettingsLoaded) return;
+    wifiSettingsLoaded = true;
+    loadAndRenderWifiList();
+    var serverUrlInput = document.getElementById("serverUrl");
+    fetch("/api/server-url")
+      .then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.json();
+      })
+      .then(function (data) {
+        if (!serverUrlDirty && data && typeof data.url === "string") serverUrlInput.value = data.url;
+      })
+      .catch(function () {
+        if (!serverUrlDirty) wifiSettingsMsg.textContent = "Chưa tải được URL backend đã lưu. Bạn vẫn có thể nhập URL mới.";
       });
   }
 
-  // ---------- Settings modal (WiFi & Backend URL config) ----------
-  var settingsNavBtn = document.getElementById("settingsNavBtn");
-  var settingsModal = document.getElementById("settingsModal");
-  var settingsCloseBtn = document.getElementById("settingsCloseBtn");
-  var wifiSettingsForm = document.getElementById("wifiSettingsForm");
-  var wifiSettingsMsg = document.getElementById("wifiSettingsMsg");
-
-  function openSettingsModal(e) {
-    if (e) e.preventDefault();
-    if (!settingsModal) return;
-    var modalBox = settingsModal.querySelector(".modal-box");
-    if (modalBox && !document.getElementById("wifiListSection")) {
-      var section = document.createElement("div");
-      section.id = "wifiListSection";
-      section.style.marginBottom = "14px";
-      var form = modalBox.querySelector("#wifiSettingsForm");
-      modalBox.insertBefore(section, form || null);
+  function showView(view, focusTitle) {
+    if (!Object.prototype.hasOwnProperty.call(viewRoutes, view)) view = "dashboard";
+    Object.keys(viewRoutes).forEach(function (name) {
+      document.getElementById(name + "View").hidden = name !== view;
+    });
+    document.querySelectorAll(".nav a[data-view]").forEach(function (link) {
+      var selected = link.getAttribute("data-view") === view;
+      link.classList.toggle("active", selected);
+      if (selected) link.setAttribute("aria-current", "page");
+      else link.removeAttribute("aria-current");
+    });
+    settingsNavBtn.classList.toggle("active", view !== "dashboard");
+    if (view !== "dashboard") {
+      settingsSubnav.hidden = false;
+      settingsNavBtn.setAttribute("aria-expanded", "true");
     }
-    settingsModal.style.display = "flex";
-    loadAndRenderWifiList();
-    var serverUrlInput = document.getElementById("serverUrl");
-    if (serverUrlInput) {
-      fetch("/api/server-url")
-        .then(function (r) { return r.json(); })
-        .then(function (data) {
-          if (data && data.url) serverUrlInput.value = data.url;
-        })
-        .catch(function () {});
+    var title = document.getElementById("pageTitle");
+    title.textContent = viewTitles[view];
+    if (focusTitle) title.focus({ preventScroll: true });
+    if (view === "wifi") loadWifiSettings();
+    if (view === "fan" && !fanSettingsLoaded) {
+      fanSettingsLoaded = true;
+      loadFanConfig();
+    }
+    if (view === "dashboard") {
+      window.requestAnimationFrame(function () {
+        if (chart) chart.resize();
+        if (fallbackChart) resizeFallbackCanvas();
+        if (mapInstance) mapInstance.invalidateSize(false);
+      });
     }
   }
 
-  function closeSettingsModal() {
-    if (settingsModal) settingsModal.style.display = "none";
+  function showLocationView(focusTitle) {
+    var hash = window.location.hash;
+    var view = Object.keys(viewRoutes).find(function (name) { return viewRoutes[name] === hash; }) || "dashboard";
+    showView(view, focusTitle);
   }
 
-  if (settingsNavBtn) settingsNavBtn.addEventListener("click", openSettingsModal);
-  if (settingsCloseBtn) settingsCloseBtn.addEventListener("click", closeSettingsModal);
+  document.querySelectorAll("a[data-view]").forEach(function (link) {
+    link.addEventListener("click", function (event) {
+      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+      event.preventDefault();
+      var view = link.getAttribute("data-view");
+      // Replacing only the fragment preserves an auth query/path and leaves
+      // browser Back available for returning to Admin rather than settings tabs.
+      window.history.replaceState(window.history.state, "", viewRoutes[view]);
+      showView(view, true);
+    });
+  });
+  settingsNavBtn.addEventListener("click", function () {
+    settingsSubnav.hidden = !settingsSubnav.hidden;
+    settingsNavBtn.setAttribute("aria-expanded", String(!settingsSubnav.hidden));
+  });
+  document.getElementById("backAdminBtn").addEventListener("click", function (event) {
+    event.preventDefault();
+    if (document.referrer) window.location.href = document.referrer;
+    else window.history.back();
+  });
+  document.getElementById("serverUrl").addEventListener("input", function () { serverUrlDirty = true; });
+  document.getElementById("wifiRefreshBtn").addEventListener("click", loadAndRenderWifiList);
+  window.addEventListener("hashchange", function () { showLocationView(true); });
+  window.addEventListener("popstate", function () { showLocationView(true); });
 
   if (wifiSettingsForm) {
     wifiSettingsForm.addEventListener("submit", function (e) {
@@ -744,8 +980,11 @@
     initMap();
     connectWS();
     pollStatus();
-    loadFanConfig();
+    pollAIStatus();
+    showLocationView(false);
     setInterval(pollStatus, 5000);
+    setInterval(pollAIStatus, 5000);
+    setInterval(checkFreshness, 1000);
   }
 
   if (document.readyState === "loading") {

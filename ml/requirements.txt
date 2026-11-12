@@ -1,3 +1,5 @@
 # Python >=3.12 (NumPy 2.5 requires Python 3.12 or newer).
 numpy==2.5.4
 tensorflow==2.21.0
+# Pin the converter-facing Keras version used for the shipped model.
+keras==3.15.1

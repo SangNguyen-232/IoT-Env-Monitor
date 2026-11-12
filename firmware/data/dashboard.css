@@ -424,6 +424,31 @@ html, body {
 .fan-config-card > .fan-config-help:last-child { margin-bottom: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
+.ai-card { margin-bottom: 20px; padding: 20px; }
+.ai-card .card-header { flex-wrap: wrap; gap: 10px; }
+.ai-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
+.ai-grid > div { min-width: 0; }
+.ai-label { display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 8px; }
+.ai-grid strong { font-size: 18px; }
+.ai-status { border-radius: 20px; padding: 5px 10px; font-size: 12px; color: var(--text-muted); background: var(--card-soft); }
+.ai-status.ready { color: var(--green); }
+.ai-status.pending { color: var(--orange); }
+.ai-detail, .ai-explainer { color: var(--text-muted); font-size: 12px; line-height: 1.65; overflow-wrap: anywhere; }
+.ai-detail { margin: 6px 0; }
+.ai-explainer { margin-top: 14px; border-top: 1px solid var(--border); padding-top: 12px; }
+.ai-explainer summary { color: var(--text); cursor: pointer; }
+.ai-explainer p { margin: 10px 0 0; }
+#fanView .control-row { flex-wrap: wrap; gap: 10px; }
+#modeSelect { min-width: 0; max-width: 100%; flex: 1 1 180px; padding: 9px; color: var(--text); background: var(--card-soft); border: 1px solid var(--border); border-radius: 8px; }
+.badge-mode.ai { color: var(--c-humi); }
+.badge-mode.shadow { color: var(--c-temp); }
+.btn-toggle:disabled { opacity: .5; cursor: not-allowed; }
+@media (max-width: 720px) {
+  .ai-grid { grid-template-columns: 1fr; gap: 14px; }
+  .ai-grid strong { font-size: 16px; }
+  #modeSelect { font-size: 16px; }
+}
+
 /* ---------- Responsive ---------- */
 @media (max-width: 880px) {
   .stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -443,58 +468,19 @@ html, body {
   .content { padding: 18px; }
 }
 
-/* ---------- Settings Modal (WiFi config) ---------- */
-.modal-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 2000;
-}
-
-.modal-box {
-  background: var(--card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  padding: 20px 24px;
-  width: 90%;
-  max-width: 360px;
-}
-
-.modal-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 14px;
-}
-
-.modal-header h2 {
-  margin: 0;
-  font-size: 16px;
-}
-
-.modal-close {
-  background: none;
-  border: none;
-  color: var(--text-muted);
-  font-size: 20px;
-  cursor: pointer;
-}
-
-.modal-form {
+/* ---------- WiFi settings form ---------- */
+.wifi-settings-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
-.modal-form label {
+.wifi-settings-form label {
   font-size: 12px;
   color: var(--text-muted);
 }
 
-.modal-form input {
+.wifi-settings-form input {
   padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid var(--border);
@@ -547,18 +533,13 @@ html, body {
   .stat-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 
-.modal-box {
-  max-height: 90vh;
-  max-height: 90dvh;
-  overflow-y: auto;
-}
 
 @media (pointer: coarse) {
   .btn-toggle { min-height: 40px; }
 }
 
 @media (max-width: 720px) {
-  .modal-form input { font-size: 16px; }
+  .wifi-settings-form input { font-size: 16px; }
 }
 
 /* Show only sidebar icons on small phones to prevent horizontal overflow. */
@@ -568,4 +549,32 @@ html, body {
   .stat-value, .stat-sub { font-size: 18px; }
   .fan-config-grid { grid-template-columns: 1fr; }
   .fan-config-card input, .fan-config-card select { font-size: 16px; }
+}
+
+/* ---------- Persistent views and nested Settings navigation ---------- */
+[hidden] { display: none !important; }
+.app-view { display: flex; flex-direction: column; gap: 18px; min-width: 0; }
+.nav-group { min-width: 0; }
+.settings-parent { width: 100%; border: 0; background: transparent; text-align: left; font-family: inherit; cursor: pointer; }
+.settings-parent::after { content: "▾"; margin-left: auto; }
+.settings-parent[aria-expanded="false"]::after { content: "▸"; }
+.settings-subnav { display: flex; flex-direction: column; gap: 3px; margin: 5px 0 8px 20px; border-left: 1px solid var(--border); padding-left: 8px; }
+.nav-child { font-size: 13px; padding: 9px 10px; }
+.nav-item:focus-visible, button:focus-visible, select:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.app-view a { color: var(--blue); }
+.wifi-settings-card { width: 100%; max-width: 680px; }
+.wifi-settings-card .card-header { gap: 14px; flex-wrap: wrap; }
+#wifiListSection { margin: 12px 0 20px; color: var(--text-muted); font-size: 13px; }
+#wifiListSection h3 { font-size: 13px; margin: 0 0 8px; }
+.wifi-network-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.wifi-network-row span { min-width: 0; overflow-wrap: anywhere; }
+.wifi-network-row button { flex-shrink: 0; }
+.wifi-settings-form input { min-width: 0; width: 100%; }
+#tinymlView .ai-card { margin-bottom: 0; }
+@media (max-width: 720px) {
+  .sidebar { flex-direction: column; align-items: stretch; gap: 14px; }
+  .nav { flex-direction: column; }
+  .sidebar .nav-item span { display: inline; }
+  .settings-subnav { margin-left: 28px; }
+  .topbar h1 { overflow-wrap: anywhere; }
 }

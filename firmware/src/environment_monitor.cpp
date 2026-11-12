@@ -4,6 +4,7 @@
 #include "shared_context.h"
 #include "input_safety.h"
 #include "sensor_format.h"
+#include "ai_telemetry.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
 #include <WiFi.h>
@@ -65,18 +66,18 @@ void temp_humi_monitor(void *pvParameters)
             ctx->humidity = humidity;
             ctx->dhtSampleValid = dht_ok;
             ctx->dhtSampledAtMs = dht_sampled_at;
+            ++ctx->sampleSeq;
+            if (ctx->sampleSeq == 0) ++ctx->sampleSeq;
             ctx->soilMoisture = soil_moisture;
             ctx->soilSampleValid = soil_ok;
             ctx->soilSampledAtMs = soil_sampled_at;
 
-            if (WiFi.status() == WL_CONNECTED) {
+            // A synchronized local clock remains useful during Wi-Fi outages.
+            {
                 struct timeval tv;
                 gettimeofday(&tv, nullptr);
-                ctx->timestampReal   = tv.tv_sec;
-                ctx->timestampRealUs = tv.tv_usec;
-            } else {
-                ctx->timestampReal   = 0;
-                ctx->timestampRealUs = 0;
+                ctx->timestampReal   = tv.tv_sec >= 1577836800 ? tv.tv_sec : 0;
+                ctx->timestampRealUs = ctx->timestampReal ? tv.tv_usec : 0;
             }
 
             if (dht_ok) {
@@ -120,6 +121,7 @@ void temp_humi_monitor(void *pvParameters)
         lcd.print(row1);
 
         JsonDocument wsPayload;
+        ai_snapshot_to_json(ctx, wsPayload);
         char temperature_json[24], humidity_json[24];
         if (dht_ok) {
             // Preserve the numeric readings; each display applies its own format.
@@ -127,6 +129,9 @@ void temp_humi_monitor(void *pvParameters)
             sensor_format_json_number(humidity_json, sizeof(humidity_json), humidity);
             wsPayload["temperature"] = serialized(temperature_json);
             wsPayload["humidity"] = serialized(humidity_json);
+        } else {
+            wsPayload["temperature"] = nullptr;
+            wsPayload["humidity"] = nullptr;
         }
         if (soil_ok) wsPayload["soil_moisture"] = soil_moisture;
         else wsPayload["soil_moisture"] = nullptr;

@@ -1,6 +1,6 @@
 # ESP32-S3 Air Monitoring & Fan Control System
 
-A real-time IoT air monitoring and fan control system running on the **ESP32-S3 (Yolo Uno)** microcontroller, paired with a containerized **Node.js + PostgreSQL** backend, **Cloudflare Tunnel / Worker Gateway**, and an on-device **TinyML** air-risk classifier. An independent soil-moisture channel provides additional monitoring.
+A real-time IoT air monitoring and fan control system running on the **ESP32-S3 (Yolo Uno)** microcontroller, paired with a containerized **Node.js + PostgreSQL** backend, **Cloudflare Tunnel / Worker Gateway**, and an on-device **TinyML** fan-action classifier for lab experiments. An independent soil-moisture channel provides additional monitoring.
 
 ---
 
@@ -40,8 +40,8 @@ Every **5 seconds**, each ESP32-S3 node samples **temperature**, **air humidity*
 1. **16×2 I2C LCD (`0x27`)** displays live `T`, `H`, `SM`, and air-risk status (`Normal` / `Warning` / `Critical`).
 2. **Status LED (`GPIO48`)** blinks at a period determined by temperature risk (`Normal` 1000 ms, `Warning` 500 ms, `Critical` 100 ms per phase).
 3. **WS2812B NeoPixel (`GPIO45`)** updates color on state transitions according to air humidity risk (Green / Yellow / Red).
-4. **Ventilation Fan (`GPIO10`)** operates in `AUTO` mode using temperature and air humidity with hysteresis and DHT freshness protection, or `MANUAL` mode with a 5-minute safety cutoff.
-5. **TinyML (`TensorFlow Lite Micro`)** runs a float32 neural network (`2 → 32 → 16 → 3`) on-chip and tracks cumulative rolling accuracy (`mlRollAcc`) against the mathematical policy.
+4. **Ventilation Fan (`GPIO10`)** operates in `AUTO` (configured rules), `SHADOW` (rules plus AI observation), `AI` (model proposal with rule fallback), or `MANUAL` (5-minute cutoff). Automatic switching has a 10-second minimum ON/OFF duration; invalid sensors force automatic OFF immediately.
+5. **TinyML (`TensorFlow Lite Micro`)** runs a float32 neural network (`2 → 32 → 16 → 3`) on-chip once per new valid sensor sample. It proposes `OFF / HOLD / ON` and reports agreement with the documented lab teacher separately from rule-based air-risk labels.
 6. **Embedded Web Server (`port 80` + `/ws`)** serves the local Device Dashboard over LittleFS to authenticated clients and supports browser-based OTA updates (`/update`).
 7. **Telemetry Client** posts JSON payloads (`X-Device-Key`) over HTTP/HTTPS to the Node.js backend (`POST /sensor`), which stores records in **PostgreSQL 18** for multi-device monitoring via the **Admin Dashboard**.
 
@@ -57,7 +57,7 @@ Every **5 seconds**, each ESP32-S3 node samples **temperature**, **air humidity*
 │  ├── temp_humi_monitor (6144B)  ───►  temperature, humidity          │
 │  ├── led_blinky        (2048B)  ◄───  dhtSampleValid, dhtSampledAtMs   │
 │  ├── neo_blinky        (2048B)  ◄───  ledState, neoState, lcdState   │
-│  ├── task_fan          (4096B)  ◄──►  mlRollAcc, g_fanEventPending     │
+│  ├── task_fan          (4096B)  ◄──►  MlResult, pending FAN/AI events     │
 │  ├── tiny_ml_task      (8192B)  ◄──►  timestampReal / timestampRealUs│
 │  ├── task_database    (16384B)  ◄───  sem{LED,Neo,DB}Update          │
 │  └── Task_Toggle_BOOT  (4096B)                                       │
@@ -110,13 +110,15 @@ Sensor displays use the same formatting on the LCD, dashboards, chart tooltips, 
 ```text
 IoT-Env-Monitor/
 ├── database/
+│   ├── MIGRATIONS.md                     # Existing-volume upgrade and experiment API
 │   ├── schema/
 │   │   └── base.sql                       # Core tables: sensor_logs, device_credentials
 │   └── migrations/
 │       ├── 001_auth.sql                   # system_users & user_devices (RBAC)
 │       ├── 002_timezone.sql               # Legacy timestamp -> timestamptz conversion
 │       ├── 003_session_login_at.sql       # Express session table + login_at column
-│       └── 004_time_display_views.sql     # Read-only display.* views in Vietnam time
+│       ├── 004_time_display_views.sql     # Read-only display.* views in Vietnam time
+│       └── 005_ai_telemetry.sql           # Additive AI metadata and view refresh
 ├── firmware/
 │   ├── boards/
 │   │   └── yolo_uno.json                  # Custom PlatformIO board manifest (ESP32-S3 8MB)
@@ -126,7 +128,10 @@ IoT-Env-Monitor/
 │   │   └── dashboard.js
 │   ├── include/
 │   │   ├── device_config.h                # LittleFS config & Wi-Fi credential persistence
-│   │   ├── dht_risk_model.h               # Embedded TFLite model byte array (alignas(16))
+│   │   ├── dht_fan_model.h               # Embedded fan action TFLite model (alignas(16))
+│   │   ├── fan_model_metadata.h           # Generated profile/domain/version/hash
+│   │   ├── ml_result.h                    # Portable AI result and freshness helpers
+│   │   ├── ai_telemetry.h                 # Shared JSON serialization
 │   │   ├── environment_monitor.h          # LCD startup, sensor polling, WebSocket broadcast task
 │   │   ├── factory_reset.h                # BOOT button long-press reset task
 │   │   ├── input_safety.h                 # Sanitization, frame checks, freshness helpers
@@ -135,7 +140,7 @@ IoT-Env-Monitor/
 │   │   ├── fan_config.h                   # Dashboard FAN configuration and persistence
 │   │   ├── fan_policy.h                   # Temperature/humidity hysteresis and manual cutoff
 │   │   ├── rgb_led.h                      # NeoPixel task declaration
-│   │   ├── risk_policy.h                  # Safety interlock + piecewise risk scoring
+│   │   ├── risk_policy.h                  # Rule-based risk labels, independent of FAN
 │   │   ├── secrets.h.example              # Template for firmware/include/secrets.h
 │   │   ├── sensor_format.h                # Shared sensor text formatting for LCD and serial output
 │   │   ├── serial_log.h                   # Mutex-protected Serial logging
@@ -146,7 +151,8 @@ IoT-Env-Monitor/
 │   │   ├── web_server.h                   # Embedded HTTP/WS/OTA server interface
 │   │   └── wifi_manager.h                 # STA/AP/Captive DNS/SNTP manager
 │   ├── lib/
-│   │   └── lcd_i2c/                       # Local LiquidCrystal_I2C driver
+│   │   ├── lcd_i2c/                       # Local LiquidCrystal_I2C driver
+│   │   └── TensorFlowLite_ESP32/           # Vendored TinyML runtime
 │   └── src/                               # Firmware C++ implementations
 │       ├── main.cpp
 │       ├── device_config.cpp
@@ -165,9 +171,12 @@ IoT-Env-Monitor/
 │       └── wifi_manager.cpp
 ├── ml/
 │   ├── data/
-│   │   └── dataset.csv                    # Generated training dataset (21,000 samples)
+│   │   └── dataset.csv                    # Training dataset with provenance and train/validation/test split
 │   ├── models/
-│   │   └── dht_risk_model.tflite          # Exported float32 TFLite model
+│   │   ├── dht_fan_model.tflite          # Exported float32 TFLite model
+│   │   └── fan_model_manifest.json        # Provenance and evaluation evidence
+│   ├── README.md                          # Lab training and labeling workflow
+│   ├── import_history.py                  # Offline history-to-CSV preparation
 │   ├── requirements.txt                   # Python dependencies (numpy, tensorflow)
 │   └── train_export.py                    # Dataset generator, trainer, validator & C exporter
 ├── services/
@@ -176,7 +185,8 @@ IoT-Env-Monitor/
 │   │   │   ├── admin/                     # Multi-device Admin Dashboard (HTML/CSS/JS)
 │   │   │   └── login/                     # Session Login UI
 │   │   ├── src/
-│   │   │   └── index.js                   # Server entrypoint
+│   │   │   ├── index.js                   # Server entrypoint
+│   │   │   └── telemetry.js               # Experiment validation and history query parsing
 │   │   ├── Dockerfile
 │   │   ├── .dockerignore
 │   │   ├── package.json
@@ -218,8 +228,8 @@ Serial startup output at `115200` baud includes `[BOOT] reset_reason=...` and th
 | `temp_humi_monitor` |   `6144`   | Every `5000 ms`               | Reads DHT20 temperature/air humidity and independent soil ADC, computes air-risk states, updates 16×2 LCD, broadcasts WebSocket sensor JSON, signals `semLEDUpdate`, `semNeoUpdate`, and `semDBUpdate` |
 | `led_blinky`        |   `2048`   | Phase delay / `semLEDUpdate`  | Blinks `GPIO48` (`1000 ms`, `500 ms`, or `100 ms` per HIGH/LOW phase); adapts immediately when `semLEDUpdate` fires                                      |
 | `neo_blinky`        |   `2048`   | Event-driven (`semNeoUpdate`) | Updates WS2812B (`GPIO45`) color only when `neoState` changes                                                                                                  |
-| `task_fan`         |   `4096`   | Every `100 ms`                | Drives fan relay (`GPIO10`) in `AUTO` or `MANUAL` mode with DHT freshness and manual-runtime protections; pushes WebSocket & DB events on state change                         |
-| `tiny_ml_task`      |   `8192`   | Every `5000 ms`               | Runs TFLite Micro inference on `[T, H]` and updates cumulative `mlRollAcc`                                                                                 |
+| `task_fan`         |   `4096`   | Every `100 ms`                | Drives fan relay (`GPIO10`) in `AUTO`/`SHADOW`/`AI`/`MANUAL` with freshness, dwell and runtime protections; pushes WebSocket & DB events on state change                         |
+| `tiny_ml_task`      |   `8192`   | Polls every `100 ms`          | Runs once per new `[T, H]` sample, publishes action/status/probabilities and teacher agreement                                                                                 |
 | `task_database`     |  `16384`   | Event-driven (`semDBUpdate`)  | Sends `POST /sensor` with `200 ms` per-source debounce and fan-event priority                                                                                 |
 | `Task_Toggle_BOOT`  |   `4096`   | Polled every `100 ms`          | Triggers factory reset if `BOOT` (`GPIO0`) is held `> 2000 ms`                                                                                               |
 
@@ -255,12 +265,14 @@ struct SharedContext {
     SemaphoreHandle_t semDBUpdate;
     time_t timestampReal;
     suseconds_t timestampRealUs;
-    float mlRollAcc;
+    uint32_t sampleSeq;
+    char bootId[33];
+    MlResult ml; // status, sample identity, action probabilities, teacher agreement
 };
 ```
 
 - **`mutexContext`**: Guards reads/writes to `SharedContext` fields across tasks.
-- **`xMutexFanControl`**: Guards `global_fan_state`, `global_fan_mode`, `fan_manual_control`, `fan_manual_state`, and the active `fan_config`.
+- **`xMutexFanControl`**: Guards `global_fan_state`, `global_fan_mode`, `fan_requested_mode`, `fan_manual_state`, decision reason, and the active `fan_config`.
 - **`g_wifiSwitchMutex`**: Guards pending Wi-Fi switch credentials (`g_wifiSwitchSSID`, `g_wifiSwitchPass`, `g_wifiSwitchFlag`).
 - **`serialLogLock()` / `serialLogUnlock()`**: Prevents interleaved UART logs across concurrent tasks.
 
@@ -279,7 +291,7 @@ Defined in `firmware/include/risk_policy.h` from temperature and air humidity (`
    - `Warning`: `50% ≤ H < 60%` or `70% < H ≤ 80%` → Yellow `(255, 255, 0)`
    - `Critical`: `H < 50%` or `H > 80%` → Red `(255, 0, 0)`
 3. **Composite Safety Label (`lcdState` & DB `Message`)**:
-   - **Hard Safety Interlock**: Immediately returns `Critical (3)` if `T ≥ 40°C` or `H ≥ 90%`.
+   - **Rule label override** (does not operate the fan): Immediately returns `Critical (3)` if `T ≥ 40°C` or `H ≥ 90%`.
    - **Weighted Piecewise Penalty (`risk_pure_mathematical_label`)**:
      $$
      r = \frac{7}{11} \cdot \text{score}(T) + \frac{4}{11} \cdot \text{score}(H)
@@ -295,9 +307,14 @@ Defined in `firmware/include/risk_policy.h` from temperature and air humidity (`
 
 Implemented in `firmware/src/tinyml.cpp` using `TensorFlowLite_ESP32`:
 
-- **Architecture**: `Input(2) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)` (float32, 16 KiB tensor arena).
-- **Validation**: Requires valid, fresh DHT readings (`dht_sample_values_are_valid()` and `dht_sample_is_fresh()`), compares the model's `argmax` prediction against `risk_pure_mathematical_label()`, and updates session-wide agreement `mlRollAcc` (reported to PostgreSQL in the `Score` field).
-- **Evidence scope**: Training and validation use synthetic temperature/air-humidity samples and mathematical-policy labels. `Score` measures agreement with that policy. Physical risk calibration and fan effectiveness require separate measurements.
+- **Architecture**: raw `[temperature °C, humidity %RH]` → `Dense(32, ReLU)` → `Dense(16, ReLU)` → `Dense(3, Softmax)`, float32 with a 16 KiB tensor arena. Only the FullyConnected and Softmax kernels are registered.
+- **Actions**: output indexes `0=OFF`, `1=HOLD`, `2=ON`. HOLD retains the current automatic output; the relay remains binary. These are not the LCD's `Normal/Warning/Critical` labels.
+- **Fixed lab teacher**: ON at `T >= 30°C OR RH >= 75%`; OFF at `T <= 28°C AND RH <= 70%`; HOLD otherwise. AI actuation is permitted only when the saved configuration matches this profile; other configurations continue using their own AUTO/fallback rules.
+- **Input domain**: `5..50°C`, `20..100%RH`. Invalid/stale sensors and out-of-domain inputs are not inferred. Model initialization/inference failures remain visible through status.
+- **Identity and freshness**: each boot gets a `boot_id`; each sensor sample a `sample_seq` and `sampled_uptime_ms`. Predictions are used only for their matching fresh sample. A sample is counted at most once, even though the ML task polls every 100 ms.
+- **Observability**: `/api/ai-status`, WebSocket and backend `ai` JSON report model version, status, predicted class, three probabilities, teacher class, inference duration, evaluated sample count and cumulative teacher agreement. Softmax values are uncalibrated; agreement is not real-world performance. Legacy `Score` is null for new firmware.
+- **Model provenance**: `ml/models/fan_model_manifest.json` records dataset/model hashes, split, metrics, conversion checks and validation boundaries. See [ML workflow](ml/README.md).
+
 
 ---
 
@@ -307,18 +324,21 @@ Implemented in `firmware/src/fan.cpp` on `FAN_PIN = GPIO10`:
 
 - **Relay output**: An active-HIGH relay on `GPIO10` controls the fan; `LOW` is OFF and `HIGH` is ON. Select the fan supply, relay, and wiring for the fan's operating and starting current.
 - **AUTO Mode**:
-  - Starts **OFF** with no assumed thresholds. In the Device Dashboard's **Cấu hình FAN tự động** form, enter four thresholds (`temperature_on`, `temperature_off`, `humidity_on`, `humidity_off`), choose the activation logic, then save. A valid configuration is stored in `/fan.json` and restored after reboot.
+  - Starts **OFF** with no assumed thresholds. Open **Settings → Cấu hình FAN** on the device, enter four thresholds (`temperature_on`, `temperature_off`, `humidity_on`, `humidity_off`), choose the activation logic, then save. A valid configuration is stored in `/fan.json` and restored after reboot.
   - Temperature thresholds must be within `-40..80°C`; humidity thresholds must be within `0..100%`. Both OFF thresholds must be strictly lower than their corresponding ON thresholds. Blank, non-finite, out-of-range, and inverted threshold values are rejected by both the dashboard and the device.
   - **HOẶC / OR** (`activation_logic: "any"`): turns **ON** when `T ≥ temperature_on` **or** `H ≥ humidity_on`; turns **OFF** when `T ≤ temperature_off` **and** `H ≤ humidity_off`.
   - **VÀ / AND** (`activation_logic: "all"`): turns **ON** when `T ≥ temperature_on` **and** `H ≥ humidity_on`; turns **OFF** when `T ≤ temperature_off` **or** `H ≤ humidity_off`.
   - In the remaining hysteresis band, the previous AUTO state is retained. Entering AUTO from MANUAL starts from OFF and requires an ON condition; a manual ON state does not carry into the AUTO hysteresis band. Saving changed thresholds or activation logic also resets AUTO hysteresis and requires an ON condition again.
   - Uses a valid DHT20 temperature and air-humidity sample no older than `15 s`. Missing, failed, invalid, or stale DHT readings, or absent/invalid fan configuration, force the fan OFF.
-  - Runs continuously while the configured ventilation condition is active.
+  - Runs while the configured ventilation condition is active; automatic ON/OFF transitions respect 10-second dwell times. Sensor failure, control-lock failure, mode/config changes bypass dwell to turn OFF.
   - Dashboard FAN thresholds control ventilation independently of the temperature/air-humidity risk-classification thresholds.
+- **SHADOW Mode**: uses the saved AUTO rules for actuation while logging the AI proposal; start lab comparisons here. Inference is available in every mode; SHADOW explicitly identifies an observation-only experiment in the history.
+- **AI Mode**: uses a fresh in-domain model proposal when the largest softmax output is at least `0.80`. HOLD preserves the current automatic state. The saved configuration must also match the generated model profile (30/28°C, 75/70%, OR); a mismatch (`ai_fallback_profile_mismatch`), model errors, out-of-domain inputs, stale results or lower scores select the saved AUTO rules instead, with `fan_reason` exposing the fallback. The score threshold is not proof of correctness. A valid saved fallback configuration is required before selecting AI or SHADOW.
+- **Mode transitions**: automatic mode/config changes reset output to OFF and start a new 10-second OFF dwell. Reboot returns to AUTO; AI/SHADOW activation is not persisted. Explicit MANUAL operation bypasses automatic dwell.
 - **MANUAL Mode**:
-  - Dashboard controls call `/toggle-fan` and `/set-mode`; WebSocket carries status updates.
+  - Controls in **Settings → Cấu hình FAN** call `/toggle-fan` and `/set-mode`; WebSocket carries status updates.
   - Automatically shuts off after `5 minutes` (`FAN_MANUAL_MAX_RUN_MS = 300000 ms`) to bound an unattended manual run. A new explicit ON command is needed for another manual run.
-- **State reporting**: Control requests acknowledge the requested state; `task_fan` applies the relay output. `fan_state` in WebSocket telemetry and `/api/status` reports the applied GPIO state. The dashboard keeps its last confirmed state on failed requests and shows a visible error.
+- **State reporting**: Control requests acknowledge the requested state; `task_fan` applies the relay output. `fan_state` in WebSocket telemetry and `/api/status` reports the applied GPIO command, not tachometer/RPM confirmation that the fan is spinning. The dashboard keeps its last confirmed state on failed requests and shows a visible error.
 
 ---
 
@@ -336,12 +356,13 @@ Implemented in `firmware/src/fan.cpp` on `FAN_PIN = GPIO10`:
   - **WebSocket (`/ws`)** requires a one-time token from `GET /api/ws-token` sent in an initial `{"page":"auth","token":"..."}` frame; unauthenticated sockets receive no telemetry and cannot issue commands.
 - **Embedded HTTP Endpoints (`port 80`)**:
   - `GET /` & `GET /dashboard.html` — Exchanges `?ticket=...` (if present) for an `HttpOnly` cookie and serves the Device Dashboard.
-  - `GET /api/status` — Returns AP mode and the current `fan_state` / `fan_mode` for dashboard reconciliation.
+  - `GET /api/status` — Returns AP mode and applied GPIO `fan_state` / `fan_mode`, reason and decision sample/time.
+  - `GET /api/ai-status` — Returns model status/output plus matching sample identity and applied fan status; authenticated like other device APIs.
   - `GET /api/fan-config` — Returns the saved AUTO thresholds and activation logic; before configuration, `configured` is `false` and all four thresholds are `null`.
   - `POST /api/fan-config` — Validates and persists `{temperature_on, temperature_off, humidity_on, humidity_off, activation_logic}` and returns the saved configuration with `configured: true`. Uses the same device authentication as relay controls.
   - `GET /api/ws-token` — Issues a 30-second one-time token for authenticating `/ws`.
   - `GET /toggle-fan?state=ON|OFF` — Switches to `MANUAL` mode and queues the requested fan state (`202 Accepted`); the fan task applies the relay output.
-  - `GET /set-mode?mode=AUTO|MANUAL` — Switches/toggles fan mode and logs the state transition.
+  - `GET /set-mode?mode=AUTO|SHADOW|AI|MANUAL` — Acknowledges a requested mode (202); applied mode is reported by the controller. AI/SHADOW require a saved valid fallback configuration.
   - `GET /api/wifi-list` — Lists saved SSIDs from `/wifi_list.json` (passwords omitted).
   - `POST /api/wifi-switch` — Queues live Wi-Fi network switching (`{ssid, pass}`).
   - `GET /api/server-url` — Returns current `g_sensorApiUrl`.
@@ -379,6 +400,7 @@ Implemented in `services/backend/src/index.js` (Express 5, port `3000`):
 | `/logout`                                      |       `POST`       |        —        | Destroys active session                                                     |
 | `/api/me`                                      |        `GET`        |        —        | Returns `{loggedIn, username, role}`                                      |
 | `/admin/*`                                     |        `GET`        |    Logged in    | Serves static Admin Dashboard (`admin.html`, `admin.css`, `admin.js`) |
+| `/admin/api/history` | `GET` | Logged in | Device/LAN-scoped paginated experiment history, optional time filters; see [migration and history contract](database/MIGRATIONS.md) |
 | `/admin/api/devices`                           |        `GET`        |    Logged in    | Latest record & online age per `(device_id, lan_ip)` filtered by RBAC     |
 | `/admin/api/devices/:device_id`                |      `DELETE`      |      Admin      | Deletes logs for a device (optionally scoped by `?lan_ip=...`)            |
 | `/admin/api/devices/:device_id/ticket`         |       `POST`       |    Logged in    | Verifies device password & returns a 5-minute HMAC ticket                   |
@@ -397,11 +419,12 @@ Implemented in `services/backend/src/index.js` (Express 5, port `3000`):
 
 Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
 
-- **`sensor_logs`** (`database/schema/base.sql`): Stores `id`, `timestamp_real`, `timestamp_up`, `received_at`, numeric `temperature`, `humidity`, optional `soil_moisture` (`0..100` or `null`), `"FAN_state"`, `"MODE_state"`, `"Message"`, `"Score"`, `device_id` (MAC), `lan_ip`, `latency` (µs), and `trigger_source` (`sensor` | `fan`). Rows older than `SENSOR_RETENTION_DAYS` (default `90`, `0` disables) are purged automatically every 6 hours.
+- **`sensor_logs`** (`database/schema/base.sql`): Stores `id`, `timestamp_real`, `timestamp_up`, `received_at`, numeric `temperature`, `humidity`, optional `soil_moisture` (`0..100` or `null`), `"FAN_state"`, `"MODE_state"`, `"Message"`, `"Score"`, `device_id` (MAC), `lan_ip`, `latency` (µs), and `trigger_source` (`sensor` | `fan` | `ai`), plus `boot_id`, `sample_seq`, `sampled_uptime_ms`, `ai`, `fan_reason`, `fan_config`, `fan_decision_sample_seq` and `fan_decided_uptime_ms`. Rows older than `SENSOR_RETENTION_DAYS` (default `30`, `0` disables) are purged at startup and every 6 hours.
 - **`device_credentials`** (`database/schema/base.sql`): Stores per-device `bcrypt` password hashes (`device_id` PK).
 - **`system_users` & `user_devices`** (`database/migrations/001_auth.sql`): Stores `admin`/`user` accounts and per-user `(device_id, lan_ip)` permissions.
 - **`session`** (`database/migrations/003_session_login_at.sql`): Persistent PostgreSQL session store (`connect-pg-simple`) with `login_at` timestamp.
 - **`display.*` views** (`database/migrations/004_time_display_views.sql`): Read-only views formatting all timestamps as `YYYY-MM-DD HH24:MI:SS` in `Asia/Ho_Chi_Minh`.
+- **`005_ai_telemetry.sql`**: Additive experiment metadata and display-view refresh; see [database/MIGRATIONS.md](database/MIGRATIONS.md) for existing volumes.
 - **`002_timezone.sql`**: Standalone migration helper for upgrading legacy `timestamp without time zone` installations.
 
 ---
@@ -428,16 +451,18 @@ Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
 
 Located in `firmware/data/` and served directly by the ESP32-S3:
 
-- Real-time temperature, air humidity, independent soil-moisture percentage, air-risk status banner, and live Chart.js history (`5s` / `15s` intervals, with offline canvas fallback). Soil uses a fixed green series/card color without risk thresholds. Missing or invalid measurements show placeholders and chart gaps; each sensor snapshot retains the valid readings from the other channels.
-- `ON`/`OFF` and `AUTO`/`MANUAL` fan controls synchronized with applied relay state via WebSocket and status polling; failed commands do not change the displayed state.
-- FAN AUTO configuration form for changing temperature/air-humidity ON/OFF thresholds and OR/AND activation logic without rebuilding firmware. Saved settings survive a device restart; AUTO stays OFF until the first valid save.
-- Settings modal for switching/adding Wi-Fi networks and updating the backend `SENSOR_API_URL` (`/server.json`).
+- **Dashboard** keeps the original monitoring layout: Temperature, Humidity, Soil moisture, Time, Notification, Sensor Data Chart, Current Location and read-only FAN/MODE badges. Chart.js history supports `5s` / `15s` intervals and an offline canvas fallback. Missing or invalid measurements show placeholders and chart gaps; soil retains its independent green display.
+- **Settings → Cấu hình WiFi** contains saved-network switching, the WiFi connection form and backend `SENSOR_API_URL` (`/server.json`).
+- **Settings → Cấu hình FAN** contains all fan controls: temperature/air-humidity ON/OFF thresholds, OR/AND activation logic, four-mode selection (`AUTO`/`SHADOW`/`AI`/`MANUAL`), MANUAL `ON`/`OFF`, applied state and decision reason. Saved thresholds survive restart; AUTO stays OFF until valid configuration is saved. Request acknowledgements do not prematurely change applied-state badges.
+- **Settings → TinyML** contains model action, lab reference, softmax values, agreement, model/sample identity, freshness and experiment guidance. Expired/mismatched results clear the current proposal. These details and all configuration forms are outside the main monitoring view.
+- The sidebar groups the three Settings entries between Dashboard and **Quay lại Admin**. Switching views preserves unsaved form entries and continues telemetry updates.
 
 ### Central Admin Dashboard
 
 Located in `services/backend/public/admin/`:
 
 - Polls `/admin/api/devices` every `5 s` to display multi-device telemetry cards, live online/countdown/offline indicators, and summary counters.
+- Shows AI status and sample age separately from upload/receive age, plus a per-device JSONL history export with optional time filters and cancellation.
 - Provides modals for device password verification/management, real-time access-request approval notifications, account creation, and granular per-LAN-IP device permission assignment.
 
 ---
@@ -453,11 +478,21 @@ pip install -r ml/requirements.txt
 python ml/train_export.py
 ```
 
-`ml/train_export.py`:
+`ml/train_export.py` generates a documented synthetic fan-policy dataset, separates train/validation/test before training, exports the model and matching C headers, and writes a machine-readable manifest. The supplied dataset has 36,000 samples, including samples near switching boundaries. The exported model is 4,788 bytes. It imitates a known lab policy; it has not learned a measured physical cooling response.
 
-1. Generates `21,000` labeled `[T, H]` samples (`16,000` jittered-grid samples + `5,000` uniform random samples) over `5..50°C` and `20..100%` air humidity, with labels aligned with `risk_policy.h` → `ml/data/dataset.csv`.
-2. Trains `Input(2) → Dense(32, ReLU) → Dense(16, ReLU) → Dense(3, Softmax)` with early stopping on normalized inputs `(T - 27.5) / 22.5` and `(H - 60) / 40`. Before export, this affine normalization is folded into the first Dense layer and its prediction equivalence is checked, so the firmware supplies raw `[T, H]` values in °C and %.
-3. Converts to unquantized float32 TFLite, verifies schema v3 operator compatibility (`FULLY_CONNECTED` v1, `SOFTMAX` v1) and numerical equivalence, and writes both `ml/models/dht_risk_model.tflite` and `firmware/include/dht_risk_model.h`.
+See [ml/README.md](ml/README.md) for full commands, artifact provenance, test/boundary metrics, CSV ingestion and session-disjoint evaluation. `ml/import_history.py` converts exported JSONL/history pages into deduplicated sample CSV, with blank labels by default; operator or policy labels must be declared explicitly. Candidate training can be exported outside the repository using `--output-dir`.
+
+**Existing databases:** apply the additive migration in [database/MIGRATIONS.md](database/MIGRATIONS.md) before running the new backend or sending new firmware telemetry. Rebuilding containers does not migrate an existing PostgreSQL volume. Old rows and legacy Score values are retained.
+
+### First lab experiment
+
+1. Build and upload firmware and LittleFS after setting up the migrated backend. Check Serial at 115200 baud and verify `ai.status=ready` on valid samples. Keep the fan's supply/relay arrangement appropriate to its electrical ratings.
+2. Save a fallback configuration in **Settings → Cấu hình FAN**. To enable actuation by the supplied model, use T ON/OFF = 30/28°C, RH ON/OFF = 75/70%, logic OR. These are educational thresholds, not validated environmental limits.
+3. Select SHADOW in **Settings → Cấu hình FAN**, then open **Settings → TinyML** for model action, teacher action, sample identity and probabilities. The main Dashboard retains rule-based Notification; the FAN settings show the controller's reason. Exercise normal operation, missing/stale DHT, out-of-domain data and manual timeout; do not infer hardware success from host simulations.
+4. Select AI in **Settings → Cấu hình FAN** only for the supervised lab trial. Check the 10-second automatic dwell, immediate OFF on sensor loss, fallback reasons and mode changes. Near-boundary predictions can differ from the teacher even with large softmax scores; see the manifest diagnostic.
+5. Export per-device history from the admin UI and archive before retention deletes it. `SENSOR_RETENTION_DAYS=0` disables cleanup for a controlled collection period. The RAM telemetry queue is bounded to six records and can drop data during outages; pending events can also coalesce while network requests block. Sequence gaps must be retained in analysis. Sensor/model and actuator snapshots are acquired under separate locks; the fan decision sample/time explicitly identifies its control cycle, so records must not be assumed perfectly simultaneous. A GPIO ON record is not physical rotation feedback.
+6. Label independent experiment sessions and evaluate the next model on held-out sessions. Physical effectiveness requires a suitable airflow setup and measured outcomes. Time-series forecasting and measured energy optimization require further experiments and are not implemented by this classifier.
+
 
 ---
 
@@ -491,7 +526,7 @@ docker compose up -d --build
 
 Docker Compose stores the FAN database in the `fan_pgdata18` volume. On first initialization, PostgreSQL automatically runs `base.sql`, `001_auth.sql`, `003_session_login_at.sql`, and `004_time_display_views.sql`, and the backend seeds the initial admin account from `ADMIN_USERNAME` / `ADMIN_PASSWORD`.
 
-Deploy the backend/database, ESP32 firmware, and LittleFS dashboard from this project together. Complete both uploads below, open the Device Dashboard, enter the four desired FAN thresholds and OR/AND activation logic, and save. AUTO keeps the fan OFF until valid configuration is saved; MANUAL control is available independently.
+Deploy the backend/database, ESP32 firmware, and LittleFS dashboard from this project together. Complete both uploads below, open **Settings → Cấu hình FAN** on the device, enter the four desired FAN thresholds and OR/AND activation logic, and save. AUTO keeps the fan OFF until valid configuration is saved; MANUAL control is available in the same Settings section.
 
 ### 3. Deploy Cloudflare Worker Gateway (Optional)
 

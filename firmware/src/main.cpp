@@ -60,11 +60,14 @@ void setup()
     ctx->lcdState = 1;
     ctx->timestampReal = 0;
     ctx->timestampRealUs = 0;
-    ctx->mlRollAcc = 0.0f;
+    snprintf(ctx->bootId, sizeof(ctx->bootId), "%08lx%08lx%08lx%08lx",
+             static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()),
+             static_cast<unsigned long>(esp_random()), static_cast<unsigned long>(esp_random()));
     ctx->mutexContext = xSemaphoreCreateMutex();
     ctx->semLEDUpdate = xSemaphoreCreateBinary();
     ctx->semNeoUpdate = xSemaphoreCreateBinary();
     ctx->semDBUpdate  = xSemaphoreCreateBinary();
+    Webserver_init_context(ctx);
 
     xTaskCreate(led_blinky, "Task LED Blink", 2048, (void *)ctx, 2, NULL);
     xTaskCreate(neo_blinky, "Task NEO Blink", 2048, (void *)ctx, 2, NULL);

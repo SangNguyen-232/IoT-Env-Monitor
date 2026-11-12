@@ -1,6 +1,7 @@
 #include "shared_context.h"
 
 volatile bool g_fanEventPending = false;
+volatile bool g_aiEventPending = false;
 
 String wifi_ssid = "";
 String wifi_pass = "";

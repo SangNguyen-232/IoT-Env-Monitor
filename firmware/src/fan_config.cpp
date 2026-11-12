@@ -106,6 +106,7 @@ void fan_reset_config()
     if (xMutexFanControl != nullptr) {
         xSemaphoreTake(xMutexFanControl, portMAX_DELAY);
         fan_config = FanConfig{};
+        fan_requested_mode = FanMode::Auto;
         fan_manual_state = false;
         xSemaphoreGive(xMutexFanControl);
     }

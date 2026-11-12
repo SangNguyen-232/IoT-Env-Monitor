@@ -6,15 +6,12 @@ const helmet = require('helmet');
 const bcrypt = require('bcryptjs');
 const { Pool } = require('pg');
 const path = require('path');
+const { TELEMETRY_FIELDS: SENSOR_TELEMETRY_FIELDS, validExperimentFields, parseHistoryQuery } = require('./telemetry');
 
 const BCRYPT_ROUNDS = 10;
 const LOGIN_MAX_ATTEMPTS = 5;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const loginAttempts = new Map();
-const SENSOR_TELEMETRY_FIELDS = new Set([
-  'timestamp_real', 'timestamp_up', 'temperature', 'humidity', 'soil_moisture',
-  'FAN_state', 'MODE_state', 'Message', 'Score', 'device_id', 'lan_ip', 'latency', 'trigger_source'
-]);
 
 function requireEnv(name) {
   const value = process.env[name];
@@ -230,7 +227,11 @@ async function seedAdminIfEmpty() {
   console.log(`Seeded admin user "${username.trim()}".`);
 }
 
-const RETENTION_DAYS = parseInt(process.env.SENSOR_RETENTION_DAYS || '30', 10);
+const retentionSetting = process.env.SENSOR_RETENTION_DAYS ?? '30';
+if (!/^(0|[1-9]\d{0,5})$/.test(retentionSetting)) {
+  throw new Error('SENSOR_RETENTION_DAYS must be a whole number from 0 to 999999 (0 disables automatic deletion).');
+}
+const RETENTION_DAYS = Number(retentionSetting);
 
 async function purgeOldLogs() {
   if (!(RETENTION_DAYS > 0)) return;
@@ -253,7 +254,7 @@ async function ensureSchema() {
   const columnNames = new Set(sensorColumns.rows.map(row => row.column_name));
   const requiredColumns = ['id', 'received_at', ...SENSOR_TELEMETRY_FIELDS];
   if (requiredColumns.some(column => !columnNames.has(column))) {
-    throw new Error('sensor_logs is not initialized for this application. Initialize a fresh database using the documented Docker Compose schema scripts.');
+    throw new Error('sensor_logs is missing required columns. For an existing database, back up data and apply database/migrations/005_ai_telemetry.sql before starting this backend. See database/MIGRATIONS.md. Fresh databases use the Docker Compose schema scripts. Do not delete the database volume.');
   }
   await pool.query(`
     CREATE TABLE IF NOT EXISTS "session" (
@@ -353,7 +354,9 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
     const {
       timestamp_real, timestamp_up, temperature, humidity,
       soil_moisture, FAN_state, MODE_state, Message, Score,
-      device_id, lan_ip, latency, trigger_source
+      device_id, lan_ip, latency, trigger_source,
+      boot_id, sample_seq, sampled_uptime_ms, ai, fan_reason, fan_config,
+      fan_decision_sample_seq, fan_decided_uptime_ms
     } = req.body;
 
     const safeDeviceId = sanitizeDeviceId(device_id);
@@ -383,18 +386,23 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
         !optionalNumberValid(soil_moisture, soilValue, 0, 100) ||
         (latency != null && (!Number.isInteger(latency) || latency < 0 || latency > 2147483647)) ||
         (FAN_state != null && !['ON', 'OFF'].includes(FAN_state)) ||
-        (MODE_state != null && !['AUTO', 'MANUAL'].includes(MODE_state)) ||
+        (MODE_state != null && !['AUTO', 'SHADOW', 'AI', 'MANUAL'].includes(MODE_state)) ||
         (Message != null && typeof Message !== 'string') ||
         (Score != null && !['number', 'string'].includes(typeof Score)) ||
-        (trigger_source != null && !['sensor', 'fan'].includes(trigger_source))) {
+        (typeof Score === 'number' && !Number.isFinite(Score)) ||
+        (typeof Score === 'string' && Score.length > 120) ||
+        (trigger_source != null && !['sensor', 'fan', 'ai'].includes(trigger_source)) ||
+        !validExperimentFields(req.body)) {
       return res.status(400).json({ error: 'invalid telemetry' });
     }
 
     await pool.query(
       `INSERT INTO sensor_logs
         (timestamp_real, timestamp_up, received_at, temperature, humidity,
-         soil_moisture, "FAN_state", "MODE_state", "Message", "Score", device_id, lan_ip, latency, trigger_source)
-       VALUES ($1,$2,NOW(),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         soil_moisture, "FAN_state", "MODE_state", "Message", "Score", device_id, lan_ip, latency, trigger_source,
+         boot_id, sample_seq, sampled_uptime_ms, ai, fan_reason, fan_config,
+         fan_decision_sample_seq, fan_decided_uptime_ms)
+       VALUES ($1,$2,NOW(),$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18,$19::jsonb,$20,$21)`,
       [
         timestamp_real === 'null' ? null : timestamp_real,
         timestamp_up, tempValue, humidityValue === -1 ? null : humidityValue, soilValue,
@@ -402,7 +410,11 @@ app.post('/sensor', requireSensorKey, async (req, res) => {
         safeDeviceId,
         safeLanIp,
         latency !== undefined ? latency : null,
-        trigger_source || 'sensor'
+        trigger_source || 'sensor',
+        boot_id ?? null, sample_seq ?? null, sampled_uptime_ms ?? null,
+        ai == null ? null : JSON.stringify(ai), fan_reason ?? null,
+        fan_config == null ? null : JSON.stringify(fan_config),
+        fan_decision_sample_seq ?? null, fan_decided_uptime_ms ?? null
       ]
     );
     res.sendStatus(200);
@@ -422,6 +434,10 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
           (s.device_id || CASE WHEN s.lan_ip IS NOT NULL AND s.lan_ip <> '' THEN '_' || s.lan_ip ELSE '' END) AS card_key,
           s.temperature, s.humidity, s.soil_moisture,
           s."FAN_state", s."MODE_state", s."Message", s."Score",
+          s.boot_id, s.sample_seq::float8 AS sample_seq, s.sampled_uptime_ms::float8 AS sampled_uptime_ms,
+          s.ai, s.fan_reason, s.fan_config,
+          s.fan_decision_sample_seq::float8 AS fan_decision_sample_seq,
+          s.fan_decided_uptime_ms::float8 AS fan_decided_uptime_ms,
           s.timestamp_real AS timestamp_real,
           s.timestamp_up   AS timestamp_up,
           COALESCE(s.received_at, s.timestamp_up) AS received_at,
@@ -432,7 +448,7 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
                 SELECT 1 FROM user_devices ud
                 WHERE ud.user_id = $2 AND ud.device_id = s.device_id
                   AND (ud.lan_ip = '' OR ud.lan_ip = COALESCE(s.lan_ip, ''))))
-        ORDER BY s.device_id, COALESCE(s.lan_ip, ''), COALESCE(s.received_at, s.timestamp_up) DESC
+        ORDER BY s.device_id, COALESCE(s.lan_ip, ''), COALESCE(s.received_at, s.timestamp_up) DESC, s.id DESC
       ) sub
       ORDER BY sub.device_id, sub.received_at DESC
     `, [req.session.user.role === 'admin', req.session.user.id]);
@@ -440,6 +456,54 @@ app.get('/admin/api/devices', requireLogin, async (req, res) => {
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Export bounded, ordered pages. The high-water ID excludes later normal inserts;
+// retention/deletion and transactions committed late can still change visibility.
+// This is deliberately not advertised as an immutable database snapshot.
+app.get('/admin/api/history', requireLogin, async (req, res) => {
+  const query = parseHistoryQuery(req.query);
+  if (!query) return res.status(400).json({ error: 'invalid history query' });
+  try {
+    if (!(await userCanAccessDevice(req, query.deviceId, query.lanIp))) {
+      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+    }
+    const result = await pool.query({
+      text: `WITH boundary AS (
+        SELECT COALESCE($7::integer, (SELECT MAX(s.id) FROM sensor_logs s
+        WHERE s.device_id = $1 AND ($2::text IS NULL OR s.lan_ip = $2)
+          AND ($3::timestamptz IS NULL OR COALESCE(s.received_at, s.timestamp_up) >= $3)
+          AND ($4::timestamptz IS NULL OR COALESCE(s.received_at, s.timestamp_up) < $4)
+          AND ($5::boolean OR EXISTS (
+            SELECT 1 FROM user_devices ud WHERE ud.user_id = $6 AND ud.device_id = s.device_id
+              AND (ud.lan_ip = '' OR ud.lan_ip = COALESCE(s.lan_ip, ''))))), 0) AS until_id
+      ), page AS (
+        SELECT s.* FROM sensor_logs s CROSS JOIN boundary b
+        WHERE s.device_id = $1 AND ($2::text IS NULL OR s.lan_ip = $2)
+          AND ($3::timestamptz IS NULL OR COALESCE(s.received_at, s.timestamp_up) >= $3)
+          AND ($4::timestamptz IS NULL OR COALESCE(s.received_at, s.timestamp_up) < $4)
+          AND ($5::boolean OR EXISTS (
+            SELECT 1 FROM user_devices ud WHERE ud.user_id = $6 AND ud.device_id = s.device_id
+              AND (ud.lan_ip = '' OR ud.lan_ip = COALESCE(s.lan_ip, ''))))
+          AND s.id > $8 AND s.id <= b.until_id
+        ORDER BY s.id ASC LIMIT $9
+      ) SELECT boundary.until_id,
+        COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY page.id) FROM page), '[]'::jsonb) AS rows
+      FROM boundary`,
+      values: [query.deviceId, query.lanIp, query.from, query.to,
+        req.session.user.role === 'admin', req.session.user.id,
+        query.untilId ?? null, query.afterId, query.limit + 1],
+      query_timeout: 10000
+    });
+    const { until_id: untilId, rows } = result.rows[0];
+    const hasMore = rows.length > query.limit;
+    if (hasMore) rows.pop();
+    res.set('Cache-Control', 'no-store');
+    res.json({ rows, next_after_id: hasMore ? rows[rows.length - 1].id : null, until_id: untilId });
+  } catch (err) {
+    console.error('History export failed:', err);
+    res.status(500).json({ error: 'history export failed' });
   }
 });
 

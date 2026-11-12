@@ -5,9 +5,13 @@
 
 static constexpr uint8_t FAN_PIN = 10;
 
-bool fan_manual_control = false;
+FanMode fan_requested_mode = FanMode::Auto;
 bool fan_manual_state = false;
+const char *fan_last_reason = "config_required";
+uint32_t fan_decision_sample_seq = 0;
+uint32_t fan_decided_uptime_ms = 0;
 FanConfig fan_config;
+FanConfig fan_decision_config;
 SemaphoreHandle_t xMutexFanControl = xSemaphoreCreateMutex();
 
 void fan_init()
@@ -23,6 +27,7 @@ void task_fan(void *pvParameters)
     FanPolicyState policy;
     bool last_reported_state = false;
     String last_reported_mode = "AUTO";
+    const char *last_reported_reason = "";
     bool database_event_pending = false;
 
     while (1) {
@@ -33,16 +38,18 @@ void task_fan(void *pvParameters)
             input.humidity = ctx->humidity;
             input.dhtValid = ctx->dhtSampleValid;
             input.dhtSampledAtMs = ctx->dhtSampledAtMs;
+            input.sampleSeq = ctx->sampleSeq;
+            input.ml = ctx->ml;
             xSemaphoreGive(ctx->mutexContext);
         }
 
-        FanPolicyResult result{false, false};
+        FanPolicyResult result{false, false, "control_unavailable"};
         String current_mode;
         bool mode_available = false;
         if (xMutexFanControl != nullptr
                 && xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) == pdTRUE) {
             input.controlAvailable = true;
-            input.manualControl = fan_manual_control;
+            input.mode = fan_requested_mode;
             input.manualState = fan_manual_state;
             input.now = millis();
             result = fan_policy_step(policy, input, fan_config);
@@ -51,7 +58,11 @@ void task_fan(void *pvParameters)
             // control snapshot. HTTP handlers only change the requested state.
             digitalWrite(FAN_PIN, result.on ? HIGH : LOW);
             global_fan_state = result.on ? "ON" : "OFF";
-            global_fan_mode = input.manualControl ? "MANUAL" : "AUTO";
+            global_fan_mode = fan_mode_name(input.mode);
+            fan_last_reason = result.reason;
+            fan_decision_sample_seq = input.sampleSeq;
+            fan_decided_uptime_ms = input.now;
+            fan_decision_config = fan_config;
             current_mode = global_fan_mode;
             mode_available = true;
             if (result.manualTimedOut) {
@@ -74,12 +85,15 @@ void task_fan(void *pvParameters)
         }
 
         if (result.on != last_reported_state
-                || (mode_available && current_mode != last_reported_mode)) {
+                || (mode_available && current_mode != last_reported_mode)
+                || strcmp(result.reason, last_reported_reason) != 0) {
             last_reported_state = result.on;
             if (mode_available) last_reported_mode = current_mode;
+            last_reported_reason = result.reason;
 
             String wsPayload = "{\"fan_state\":\"" + String(result.on ? "ON" : "OFF") + "\"";
             if (mode_available) wsPayload += ",\"fan_mode\":\"" + current_mode + "\"";
+            wsPayload += ",\"fan_reason\":\"" + String(result.reason) + "\"";
             wsPayload += "}";
             Webserver_sendata(wsPayload);
             database_event_pending = true;

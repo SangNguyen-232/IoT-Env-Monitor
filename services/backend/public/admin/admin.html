@@ -88,7 +88,17 @@
   </div>
 
   <!-- Device list -->
-  <div class="section-title">Thiết bị</div>
+  <div class="section-title">Thiết bị · Quan sát thí nghiệm AI</div>
+  <p class="lab-help">Mô hình mẫu đi kèm học đề xuất OFF / HOLD / ON từ luật lab bằng dữ liệu tổng hợp. Mức khớp với luật không đo hiệu quả thông gió; softmax chưa hiệu chuẩn độ tin cậy. Màu cảm biến là cảnh báo theo luật. Quạt hiển thị lệnh GPIO, không phải tốc độ quay đo được. Mẫu thiếu thời gian hoặc lệch đồng hồ có thể bị đánh dấu quá hạn.</p>
+  <details class="lab-export-options">
+    <summary>Khoảng thời gian xuất dữ liệu lab</summary>
+    <p class="lab-help">Để trống để xuất toàn bộ lịch sử còn lưu. Thời gian theo múi giờ máy đang mở trang; từ mốc bắt đầu (bao gồm) đến mốc kết thúc (không bao gồm). Để chuẩn bị dữ liệu huấn luyện, chọn mốc bắt đầu sau khi cập nhật firmware AI: bản ghi cũ thiếu mã phiên/mẫu sẽ bị công cụ nhập từ chối. JSONL giữ nguyên dữ liệu quan sát; cần gán nhãn mục tiêu riêng trước khi huấn luyện.</p>
+    <div class="lab-export-range">
+      <label for="exportFrom">Từ <input id="exportFrom" type="datetime-local" /></label>
+      <label for="exportTo">Đến <input id="exportTo" type="datetime-local" /></label>
+    </div>
+    <p class="lab-help">Lần xuất có mốc ID cuối cố định; dữ liệu bị xóa hoặc hết hạn trong lúc xuất có thể không còn trong tệp.</p>
+  </details>
   <div class="device-grid" id="deviceGrid">
     <div class="state-box">
       <div class="spinner"></div>

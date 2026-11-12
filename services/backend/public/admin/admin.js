@@ -11,6 +11,7 @@
   var currentDevices = [];
   var selectedDeviceIds = [];
   var latestTimestampUp = null;
+  var activeExports = {};
 
   // ─── Load user information and redirect if the user is not logged in ───────────────
   function loadCurrentUser(cb) {
@@ -296,6 +297,134 @@
     return "val-normal";
   }
 
+  function aiStatusLabel(status) {
+    return ({ ready: "Có kết quả", loading: "Đang tải", sensor_invalid: "Cảm biến lỗi",
+      out_of_domain: "Ngoài miền mô hình", inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
+      stale: "Kết quả quá hạn" })[status] || "Chưa có dữ liệu AI";
+  }
+
+  function aiClass(value) {
+    return ["OFF", "HOLD", "ON"].indexOf(value) >= 0 ? value : "—";
+  }
+
+  function aiSnapshotFresh(device) {
+    var timestamp = getTimestampMs(device);
+    if (timestamp === null || !device.timestamp_real || !device.received_at) return false;
+    var sampledAt = new Date(device.timestamp_real).getTime();
+    var receivedAt = new Date(device.received_at).getTime();
+    if (!Number.isFinite(sampledAt) || !Number.isFinite(receivedAt)) return false;
+    // Queue/retry arrival time is not the sensor acquisition time. Use server
+    // receipt age plus the device-to-server sample lag; browser clock offsets
+    // cancel through _fetchedAt. Large future samples have untrusted clocks.
+    var sampleLag = receivedAt - sampledAt;
+    var receiptAge = Date.now() - timestamp;
+    return sampleLag >= -2000 && receiptAge >= 0 && receiptAge + Math.max(0, sampleLag) < 15000;
+  }
+
+  function aiMatchesSample(device) {
+    return device.ai && typeof device.boot_id === "string" && device.boot_id.length > 0 &&
+      Number.isInteger(device.sample_seq) && Number.isInteger(device.sampled_uptime_ms) &&
+      device.ai.sample_seq === device.sample_seq && device.ai.sampled_uptime_ms === device.sampled_uptime_ms;
+  }
+
+  function renderAILab(device) {
+    var ai = device.ai && typeof device.ai === "object" ? device.ai : null;
+    var fresh = aiSnapshotFresh(device);
+    var status = !fresh ? "stale" : ai && ai.status;
+    if (status === "ready" && !aiMatchesSample(device)) status = "stale";
+    var ready = ai && status === "ready";
+    var proposal = ready ? aiClass(ai.predicted_class) : "—";
+    var teacher = ai && status !== "stale" ? aiClass(ai.rule_class) : "—";
+    var agreement = ai && typeof ai.agreement_pct === "number" && Number.isFinite(ai.agreement_pct) &&
+      ai.agreement_pct >= 0 && ai.agreement_pct <= 100 && Number.isInteger(ai.evaluated_samples) && ai.evaluated_samples > 0
+      ? ai.agreement_pct.toFixed(1) + "% / " + ai.evaluated_samples + " mẫu" : "—";
+    var probs = ready && Array.isArray(ai.probabilities) && ai.probabilities.length === 3 && ai.probabilities.every(function (p) {
+      return typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
+    }) ? ai.probabilities.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") : "—";
+    var mode = ["AUTO", "SHADOW", "AI", "MANUAL"].indexOf(device.MODE_state) >= 0 ? device.MODE_state : "—";
+    var fan = device.FAN_state === "ON" || device.FAN_state === "OFF" ? device.FAN_state : "—";
+    return '<div class="device-ai">' +
+      '<div class="device-ai-heading"><strong>TinyML</strong><span class="js-ai-status">' + escapeHtml(aiStatusLabel(status)) + '</span></div>' +
+      '<p>AI: <strong class="js-ai-proposal">' + proposal + '</strong> · Luật lab tham chiếu: <span class="js-ai-teacher">' + teacher + '</span></p>' +
+      '<p>Mức khớp với luật: ' + escapeHtml(agreement) + '</p>' +
+      '<p class="ai-probabilities">Softmax OFF / HOLD / ON: <span class="js-ai-probabilities">' + escapeHtml(probs) + '</span></p>' +
+      '<p>Mô hình: ' + escapeHtml(ai && ai.model_version || '—') + '</p>' +
+      '<p>Quạt / chế độ <span class="js-fan-freshness">' + (fresh ? '(lần nhận mới nhất)' : '(dữ liệu cũ)') + '</span>: <strong>' + escapeHtml(fan) + ' / ' + escapeHtml(mode) + '</strong></p>' +
+      '<p>Lý do: ' + escapeHtml(device.fan_reason || '—') + '</p>' +
+      '<p class="lab-sample">Phiên ' + escapeHtml(device.boot_id || '—') + ' · mẫu ' + escapeHtml(device.sample_seq == null ? '—' : device.sample_seq) + '</p>' +
+      (!ai && device.Score != null ? '<p class="lab-legacy">Bản ghi cũ: Score thuộc mô hình rủi ro trước đây, không được dùng làm mức khớp điều khiển quạt.</p>' : '') +
+      '</div>';
+  }
+
+  function syncExportButtons() {
+    document.querySelectorAll(".device-card[data-card-key]").forEach(function (card) {
+      var active = activeExports[card.getAttribute("data-card-key")];
+      var button = card.querySelector(".js-lab-export");
+      var status = card.querySelector(".js-export-status");
+      if (button) button.textContent = active ? "Hủy xuất" : "Xuất dữ liệu JSONL";
+      if (status) status.textContent = active ? "Đã đọc " + active.count + " mẫu…" : "";
+    });
+  }
+
+  async function exportLabData(device) {
+    var key = getCardKey(device);
+    if (activeExports[key]) {
+      activeExports[key].controller.abort();
+      return;
+    }
+    var query = new URLSearchParams({ device_id: device.device_id, limit: "1000" });
+    if (device.lan_ip) query.set("lan_ip", device.lan_ip);
+    var from = document.getElementById("exportFrom").value;
+    var to = document.getElementById("exportTo").value;
+    if (from && to && new Date(from).getTime() >= new Date(to).getTime()) {
+      alert("Mốc bắt đầu phải trước mốc kết thúc.");
+      return;
+    }
+    if (from) query.set("from", new Date(from).toISOString());
+    if (to) query.set("to", new Date(to).toISOString());
+    var job = { controller: new AbortController(), count: 0 };
+    activeExports[key] = job;
+    syncExportButtons();
+    try {
+      var chunks = [];
+      var after = 0;
+      var until = null;
+      do {
+        query.set("after_id", String(after));
+        if (until !== null) query.set("until_id", String(until));
+        var response = await fetch("/admin/api/history?" + query.toString(), { signal: job.controller.signal, cache: "no-store" });
+        if (!response.ok) throw new Error("Không tải được lịch sử (HTTP " + response.status + ").");
+        var page = await response.json();
+        if (!page || !Array.isArray(page.rows) || !Number.isInteger(page.until_id) ||
+          (until !== null && page.until_id !== until)) throw new Error("Phản hồi lịch sử không hợp lệ.");
+        until = page.until_id;
+        chunks.push(page.rows.map(function (row) { return JSON.stringify(row) + "\n"; }).join(""));
+        job.count += page.rows.length;
+        syncExportButtons();
+        if (page.next_after_id === null) break;
+        if (!Number.isInteger(page.next_after_id) || page.next_after_id <= after || page.next_after_id > until) {
+          throw new Error("Con trỏ phân trang lịch sử không hợp lệ.");
+        }
+        after = page.next_after_id;
+      } while (!job.controller.signal.aborted);
+      if (job.controller.signal.aborted) return;
+      if (!job.count) { alert("Không có mẫu trong khoảng thời gian đã chọn."); return; }
+      var blobUrl = URL.createObjectURL(new Blob(chunks, { type: "application/x-ndjson;charset=utf-8" }));
+      var link = document.createElement("a");
+      link.href = blobUrl;
+      link.download = "lab-" + String(device.device_id).replace(/[^a-zA-Z0-9_-]/g, "_") + "-" + new Date().toISOString().replace(/[:.]/g, "-") + ".jsonl";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 10000);
+    } catch (error) {
+      if (error.name !== "AbortError") alert(error.message || "Không xuất được dữ liệu.");
+    } finally {
+      delete activeExports[key];
+      syncExportButtons();
+    }
+  }
+
   // ─── Render device cards: only administrators can select devices for deletion ──────
   function renderCard(device) {
     var cardKey = getCardKey(device);
@@ -349,6 +478,9 @@
           '<span class="sensor-value js-val-soil val-soil">' + escapeHtml(fmtSoil(device.soil_moisture)) + '</span>' +
         '</div>' +
       '</div>' +
+      renderAILab(device) +
+      '<button type="button" class="btn-action js-lab-export">Xuất dữ liệu JSONL</button>' +
+      '<p class="export-status js-export-status" role="status"></p>' +
       '<div class="card-footer">' +
         '<span class="last-seen js-last-seen" style="display: ' + displayStyle + ';">' +
           '<span class="js-countdown-label">' + countdownPrefix + '</span>' +
@@ -372,6 +504,13 @@
       renderGrid(currentDevices);
       renderActionBar();
     });
+
+    var exportButton = card.querySelector(".js-lab-export");
+    exportButton.addEventListener("click", function (event) {
+      event.stopPropagation();
+      exportLabData(device);
+    });
+    exportButton.addEventListener("keydown", function (event) { event.stopPropagation(); });
 
     var arrowBtn = card.querySelector(".card-arrow");
     if (arrowBtn) {
@@ -415,6 +554,7 @@
     devices.forEach(function (device) {
       grid.appendChild(renderCard(device));
     });
+    syncExportButtons();
   }
 
   function updateSummary(devices) {
@@ -455,6 +595,13 @@
         var cardOnline = device ? isDeviceOnline(device) : false;
         pillEl.className = "status-pill " + (cardOnline ? "online" : "offline") + " js-status-pill";
         labelEl.textContent = cardOnline ? "Online" : "Offline";
+        if (device && (!aiSnapshotFresh(device) || (device.ai && device.ai.status === "ready" && !aiMatchesSample(device)))) {
+          card.querySelector(".js-ai-status").textContent = "Kết quả quá hạn";
+          card.querySelector(".js-ai-proposal").textContent = "—";
+          card.querySelector(".js-ai-teacher").textContent = "—";
+          card.querySelector(".js-ai-probabilities").textContent = "—";
+          card.querySelector(".js-fan-freshness").textContent = "(dữ liệu cũ)";
+        }
       }
     });
 

@@ -1,182 +1,126 @@
 #include "tinyml.h"
-#include "risk_policy.h"
-#include "input_safety.h"
-#include "sensor_format.h"
+#include "ai_telemetry.h"
 #include "serial_log.h"
-#include "shared_context.h"
-#include <Arduino.h>
+#include "web_server.h"
 #include <TensorFlowLite_ESP32.h>
-#include "tensorflow/lite/micro/all_ops_resolver.h"
+#include "tensorflow/lite/micro/micro_mutable_op_resolver.h"
 #include "tensorflow/lite/micro/micro_error_reporter.h"
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
+#include "dht_fan_model.h"
 
-#include <math.h>
-#include "dht_risk_model.h"
+namespace {
+constexpr int kTensorArenaSize = 16 * 1024;
+alignas(16) uint8_t tensor_arena[kTensorArenaSize];
+tflite::MicroInterpreter *interpreter = nullptr;
+TfLiteTensor *input = nullptr;
+TfLiteTensor *output = nullptr;
 
-namespace
+bool setupTinyML()
 {
-    tflite::ErrorReporter *error_reporter = nullptr;
-    const tflite::Model *model = nullptr;
-    tflite::MicroInterpreter *interpreter = nullptr;
-    TfLiteTensor *input = nullptr;
-    TfLiteTensor *output = nullptr;
-    constexpr int kTensorArenaSize = 16 * 1024;
-    alignas(16) uint8_t tensor_arena[kTensorArenaSize];
-    bool s_tinyml_ready = false;
-
-    int tensor_element_count(const TfLiteTensor *tensor)
-    {
-        int n = 1;
-        for (int i = 0; i < tensor->dims->size; ++i)
-            n *= tensor->dims->data[i];
-        return n;
-    }
-
-    int argmax_float(const float *p, int n)
-    {
-        int best = 0;
-        for (int i = 1; i < n; ++i) {
-            if (p[i] > p[best])
-                best = i;
-        }
-        return best;
-    }
-
-    void setupTinyML()
-    {
-        s_tinyml_ready = false;
-        static tflite::MicroErrorReporter micro_error_reporter;
-        error_reporter = &micro_error_reporter;
-
-        model = tflite::GetModel(dht_anomaly_model_tflite);
-        if (model->version() != TFLITE_SCHEMA_VERSION) {
-            error_reporter->Report("Model schema version %d != supported %d.",
-                                   model->version(), TFLITE_SCHEMA_VERSION);
-            return;
-        }
-
-        static tflite::AllOpsResolver resolver;
-        static tflite::MicroInterpreter static_interpreter(
-            model, resolver, tensor_arena, kTensorArenaSize, error_reporter);
-        interpreter = &static_interpreter;
-
-        if (interpreter->AllocateTensors() != kTfLiteOk) {
-            error_reporter->Report("AllocateTensors() failed");
-            return;
-        }
-
-        input = interpreter->input(0);
-        output = interpreter->output(0);
-
-        if (!input || !output || input->type != kTfLiteFloat32 || output->type != kTfLiteFloat32) {
-            error_reporter->Report("TinyML: expected float32 input/output");
-            return;
-        }
-        if (tensor_element_count(input) != 2 || tensor_element_count(output) != 3) {
-            error_reporter->Report("TinyML: need input 2 floats (temp,humi), output 3 (softmax). Re-run ml/train_export.py");
-            return;
-        }
-
-        s_tinyml_ready = true;
-    }
+    static tflite::MicroErrorReporter reporter;
+    const tflite::Model *model = tflite::GetModel(fan_model_tflite);
+    if (model->version() != TFLITE_SCHEMA_VERSION) return false;
+    static tflite::MicroMutableOpResolver<2> resolver;
+    if (resolver.AddFullyConnected() != kTfLiteOk || resolver.AddSoftmax() != kTfLiteOk) return false;
+    static tflite::MicroInterpreter instance(model, resolver, tensor_arena, kTensorArenaSize, &reporter);
+    interpreter = &instance;
+    if (interpreter->AllocateTensors() != kTfLiteOk) return false;
+    input = interpreter->input(0);
+    output = interpreter->output(0);
+    return input && output && input->type == kTfLiteFloat32 && output->type == kTfLiteFloat32
+        && input->dims->size == 2 && input->dims->data[0] == 1 && input->dims->data[1] == 2
+        && output->dims->size == 2 && output->dims->data[0] == 1 && output->dims->data[1] == 3;
+}
 }
 
 void tiny_ml_task(void *pvParameters)
 {
     SharedContext *ctx = static_cast<SharedContext *>(pvParameters);
-    if (!ctx) {
-        vTaskDelete(nullptr);
-        return;
+    if (!ctx || !ctx->mutexContext) { vTaskDelete(nullptr); return; }
+    const bool modelReady = setupTinyML();
+    if (!modelReady) {
+        xSemaphoreTake(ctx->mutexContext, portMAX_DELAY);
+        ctx->ml.status = AiStatus::ModelError;
+        xSemaphoreGive(ctx->mutexContext);
+        Serial.println("[AI] Model initialization failed; rule fallback remains available");
     }
-
-    setupTinyML();
-    if (!s_tinyml_ready) {
-        vTaskDelete(nullptr);
-        return;
-    }
-
-    unsigned long inferences = 0;
-    unsigned long correct = 0;
-
-    while (1) {
-        float temperature = 0.0f;
-        float humidity = 0.0f;
-        bool sample_ready = false;
-
-        if (xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(2000)) == pdTRUE) {
-            temperature   = ctx->temperature;
-            humidity      = ctx->humidity;
-            sample_ready  = dht_sample_is_fresh(ctx->dhtSampleValid, ctx->dhtSampledAtMs, millis());
-            xSemaphoreGive(ctx->mutexContext);
-        }
-
-        if (!sample_ready || !dht_sample_values_are_valid(temperature, humidity)) {
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            continue;
-        }
-
-        input->data.f[0] = temperature;
-        input->data.f[1] = humidity;
-
-        const unsigned long t0 = millis();
-        if (interpreter->Invoke() != kTfLiteOk) {
-            error_reporter->Report("Invoke failed");
-            vTaskDelay(pdMS_TO_TICKS(5000));
-            continue;
-        }
-        const unsigned long t1 = millis();
-
-        const int nout = tensor_element_count(output);
-        const int best = argmax_float(output->data.f, nout);
-        const int predicted = best + 1; // Map index (0..2) -> Label (1..3)
-
-        const int expected = risk_pure_mathematical_label(temperature, humidity);
-
-        if (predicted == expected)
-            correct++;
-        inferences++;
-
-        const char *status = "Mismatch";
-        if (expected == predicted) {
-            if (expected == 1) status = "Normal";
-            else if (expected == 2) status = "Warning";
-            else if (expected == 3) status = "Critical";
-        }
-
-        const bool is_safety_triggered = (temperature >= 40.0f || humidity >= 90.0f);
-
-        char log_status_str[64];
-        if (is_safety_triggered) {
-            if (strcmp(status, "Critical") == 0) {
-                snprintf(log_status_str, sizeof(log_status_str), "%s", status);
-            } else {
-                snprintf(log_status_str, sizeof(log_status_str), "%s -> Critical", status);
-            }
-        } else {
-            snprintf(log_status_str, sizeof(log_status_str), "%s", status);
-        }
-
-        const float roll_acc = 100.0f * static_cast<float>(correct) / static_cast<float>(inferences);
+    uint32_t lastSeq = 0, lastSampledAt = 0, evaluated = 0, agreed = 0;
+    while (true) {
+        float t = 0, h = 0;
+        bool valid = false;
+        uint32_t seq = 0, sampledAt = 0;
         if (xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE) {
-            // roll_acc measures agreement between TFLite predictions and the mathematical training rule.
-            ctx->mlRollAcc = roll_acc;
+            t = ctx->temperature; h = ctx->humidity;
+            valid = ctx->dhtSampleValid;
+            seq = ctx->sampleSeq;
+            sampledAt = ctx->dhtSampledAtMs;
             xSemaphoreGive(ctx->mutexContext);
         }
-
-        char temperature_text[8], humidity_text[8];
-        sensor_format_temperature(temperature_text, sizeof(temperature_text), temperature);
-        sensor_format_humidity(humidity_text, sizeof(humidity_text), humidity);
-        serialLogLock();
-        Serial.printf("TinyML T=%s°C H=%s%% | rule=%d pred=%d | %s | p=[%.2f,%.2f,%.2f] | %lums | roll_acc=%.1f%% (%lu/%lu)\n",
-                      temperature_text, humidity_text, expected, predicted,
-                      log_status_str,
-                      output->data.f[0], output->data.f[1], output->data.f[2],
-                      static_cast<unsigned long>(t1 - t0),
-                      roll_acc,
-                      correct, inferences);
-        serialLogUnlock();
-
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        // At most one inference/count per sensor sample, independent of task phase.
+        if (seq == 0 || (seq == lastSeq && sampledAt == lastSampledAt)) {
+            vTaskDelay(pdMS_TO_TICKS(100));
+            continue;
+        }
+        MlResult result;
+        result.sampleSeq = seq;
+        result.sampledAtMs = sampledAt;
+        if (!modelReady) result.status = AiStatus::ModelError;
+        else if (!dht_sample_is_fresh(valid, sampledAt, millis()) || !dht_sample_values_are_valid(t, h))
+            result.status = AiStatus::SensorInvalid;
+        else if (!fan_model_in_domain(t, h)) result.status = AiStatus::OutOfDomain;
+        else {
+            input->data.f[0] = t;
+            input->data.f[1] = h;
+            const uint32_t startedAt = micros();
+            const TfLiteStatus invoked = interpreter->Invoke();
+            result.inferenceMs = static_cast<uint32_t>(micros() - startedAt) / 1000.0f;
+            result.status = AiStatus::InferenceError;
+            if (invoked == kTfLiteOk) {
+                int best = 0;
+                for (int i = 0; i < 3; ++i) {
+                    result.probabilities[i] = output->data.f[i];
+                    if (output->data.f[i] > output->data.f[best]) best = i;
+                }
+                result.predicted = static_cast<FanAction>(best);
+                result.rule = fan_model_teacher(t, h);
+                if (ml_probabilities_valid(result)) result.status = AiStatus::Ready;
+            }
+        }
+        bool published = false;
+        if (xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE) {
+            if (ctx->sampleSeq == seq && ctx->dhtSampledAtMs == sampledAt) {
+                if (result.status == AiStatus::Ready) {
+                    if (evaluated == UINT32_MAX) { evaluated = 0; agreed = 0; }
+                    ++evaluated;
+                    if (result.predicted == result.rule) ++agreed;
+                }
+                result.evaluated = evaluated;
+                result.agreed = agreed;
+                ctx->ml = result;
+                g_aiEventPending = true;
+                published = true;
+                lastSeq = seq; lastSampledAt = sampledAt;
+            }
+            xSemaphoreGive(ctx->mutexContext);
+        }
+        if (published) {
+            xSemaphoreGive(ctx->semDBUpdate);
+            JsonDocument doc;
+            if (ai_snapshot_to_json(ctx, doc)) {
+                String json;
+                serializeJson(doc, json);
+                Webserver_sendata(json);
+            }
+            serialLogLock();
+            Serial.printf("[AI] sample=%lu status=%s teacher=%s proposal=%s p=[%.3f,%.3f,%.3f] latency=%.3fms agreement=%lu/%lu\n",
+                static_cast<unsigned long>(seq), ai_status_name(result.status),
+                fan_action_name(result.rule) ? fan_action_name(result.rule) : "--",
+                fan_action_name(result.predicted) ? fan_action_name(result.predicted) : "--",
+                result.probabilities[0], result.probabilities[1], result.probabilities[2], result.inferenceMs,
+                static_cast<unsigned long>(agreed), static_cast<unsigned long>(evaluated));
+            serialLogUnlock();
+        }
+        vTaskDelay(pdMS_TO_TICKS(100));
     }
 }

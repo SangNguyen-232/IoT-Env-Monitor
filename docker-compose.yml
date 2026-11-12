@@ -19,6 +19,7 @@ services:
       - ./database/migrations/001_auth.sql:/docker-entrypoint-initdb.d/02_auth.sql
       - ./database/migrations/003_session_login_at.sql:/docker-entrypoint-initdb.d/03_session_login_at.sql
       - ./database/migrations/004_time_display_views.sql:/docker-entrypoint-initdb.d/04_time_display_views.sql
+      - ./database/migrations/005_ai_telemetry.sql:/docker-entrypoint-initdb.d/05_ai_telemetry.sql
     networks:
       - iot_net
     healthcheck:
@@ -52,6 +53,7 @@ services:
       DB_PORT: "5432"
       SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env}
       SENSOR_API_KEY: ${SENSOR_API_KEY:?Set SENSOR_API_KEY in .env}
+      SENSOR_RETENTION_DAYS: ${SENSOR_RETENTION_DAYS:-30}
       ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
       ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env}
       TRUST_PROXY: "1"

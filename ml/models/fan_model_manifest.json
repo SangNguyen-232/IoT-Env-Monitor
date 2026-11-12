@@ -1,0 +1,415 @@
+{
+  "architecture": [
+    2,
+    32,
+    16,
+    3
+  ],
+  "best_epoch_by_validation_loss": 85,
+  "bytes": 4788,
+  "claims": {
+    "forecasting": false,
+    "hardware_validated": false,
+    "probabilities_calibrated": false,
+    "real_environment_efficacy_validated": false
+  },
+  "completed_epochs": 100,
+  "conversion": {
+    "class_disagreements": 0,
+    "input": {
+      "dtype": "float32",
+      "shape": [
+        1,
+        2
+      ],
+      "units": [
+        "C",
+        "%RH"
+      ]
+    },
+    "max_probability_absolute_error": 5.930662155151367e-06,
+    "operators": [
+      {
+        "name": "FULLY_CONNECTED",
+        "version": 1
+      },
+      {
+        "name": "SOFTMAX",
+        "version": 1
+      }
+    ],
+    "output": {
+      "dtype": "float32",
+      "labels": [
+        "OFF",
+        "HOLD",
+        "ON"
+      ],
+      "shape": [
+        1,
+        3
+      ]
+    },
+    "samples": 10796
+  },
+  "data_origin": "synthetic",
+  "dataset": {
+    "input_file_sha256": null,
+    "rows": 36000,
+    "sha256": "18b8f12a243801d3e36809bca072377ec1b7ae01c4a9b031b6c1d2ebf56c6984",
+    "split_method": "stratified-disjoint-unique-inputs",
+    "split_sessions": null,
+    "split_sizes": {
+      "test": 5398,
+      "train": 25204,
+      "validation": 5398
+    }
+  },
+  "domain": {
+    "humidity_percent": [
+      20.0,
+      100.0
+    ],
+    "temperature_c": [
+      5.0,
+      50.0
+    ]
+  },
+  "environment": {
+    "keras": "3.15.1",
+    "numpy": "2.5.4",
+    "python": "3.12.16",
+    "tensorflow": "2.21.0"
+  },
+  "label_source": "synthetic-policy",
+  "labels_by_index": [
+    "OFF",
+    "HOLD",
+    "ON"
+  ],
+  "limitations": [
+    "Synthetic-policy accuracy measures agreement with a known teacher, not superiority over that teacher.",
+    "Operator labels measure imitation of operator choices, not optimal ventilation or energy savings.",
+    "Softmax values are uncalibrated; boundary mistakes and unseen conditions remain possible.",
+    "Physical fan response, RTOS timing and power safety require independent hardware experiments.",
+    "Exact training bytes may vary across TensorFlow/platform versions; versions, seed and hashes are recorded."
+  ],
+  "metrics": {
+    "test": {
+      "fixed_policy_baseline": {
+        "accuracy": 1.0,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            1387,
+            0,
+            0
+          ],
+          [
+            0,
+            814,
+            0
+          ],
+          [
+            0,
+            0,
+            3197
+          ]
+        ],
+        "recall": {
+          "HOLD": 1.0,
+          "OFF": 1.0,
+          "ON": 1.0
+        },
+        "samples": 5398,
+        "support": {
+          "HOLD": 814,
+          "OFF": 1387,
+          "ON": 3197
+        }
+      },
+      "model": {
+        "accuracy": 0.9966654316413487,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            1386,
+            1,
+            0
+          ],
+          [
+            3,
+            797,
+            14
+          ],
+          [
+            0,
+            0,
+            3197
+          ]
+        ],
+        "recall": {
+          "HOLD": 0.9791154791154791,
+          "OFF": 0.9992790194664743,
+          "ON": 1.0
+        },
+        "samples": 5398,
+        "support": {
+          "HOLD": 814,
+          "OFF": 1387,
+          "ON": 3197
+        }
+      },
+      "softmax_gate": {
+        "accepted_accuracy": 0.9998104265402844,
+        "accepted_errors": 1,
+        "accepted_samples": 5275,
+        "coverage": 0.9772137828825491,
+        "interpretation": "Uncalibrated softmax gate only; profile/freshness/domain gates are separate.",
+        "minimum_max_softmax": 0.8,
+        "samples": 5398
+      },
+      "train_majority_baseline": {
+        "accuracy": 0.5922563912560207,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            0,
+            0,
+            1387
+          ],
+          [
+            0,
+            0,
+            814
+          ],
+          [
+            0,
+            0,
+            3197
+          ]
+        ],
+        "recall": {
+          "HOLD": 0.0,
+          "OFF": 0.0,
+          "ON": 1.0
+        },
+        "samples": 5398,
+        "support": {
+          "HOLD": 814,
+          "OFF": 1387,
+          "ON": 3197
+        }
+      }
+    },
+    "validation": {
+      "fixed_policy_baseline": {
+        "accuracy": 1.0,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            1387,
+            0,
+            0
+          ],
+          [
+            0,
+            814,
+            0
+          ],
+          [
+            0,
+            0,
+            3197
+          ]
+        ],
+        "recall": {
+          "HOLD": 1.0,
+          "OFF": 1.0,
+          "ON": 1.0
+        },
+        "samples": 5398,
+        "support": {
+          "HOLD": 814,
+          "OFF": 1387,
+          "ON": 3197
+        }
+      },
+      "model": {
+        "accuracy": 0.9979622082252686,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            1386,
+            1,
+            0
+          ],
+          [
+            0,
+            804,
+            10
+          ],
+          [
+            0,
+            0,
+            3197
+          ]
+        ],
+        "recall": {
+          "HOLD": 0.9877149877149877,
+          "OFF": 0.9992790194664743,
+          "ON": 1.0
+        },
+        "samples": 5398,
+        "support": {
+          "HOLD": 814,
+          "OFF": 1387,
+          "ON": 3197
+        }
+      },
+      "softmax_gate": {
+        "accepted_accuracy": 1.0,
+        "accepted_errors": 0,
+        "accepted_samples": 5290,
+        "coverage": 0.9799925898480919,
+        "interpretation": "Uncalibrated softmax gate only; profile/freshness/domain gates are separate.",
+        "minimum_max_softmax": 0.8,
+        "samples": 5398
+      },
+      "train_majority_baseline": {
+        "accuracy": 0.5922563912560207,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            0,
+            0,
+            1387
+          ],
+          [
+            0,
+            0,
+            814
+          ],
+          [
+            0,
+            0,
+            3197
+          ]
+        ],
+        "recall": {
+          "HOLD": 0.0,
+          "OFF": 0.0,
+          "ON": 1.0
+        },
+        "samples": 5398,
+        "support": {
+          "HOLD": 814,
+          "OFF": 1387,
+          "ON": 3197
+        }
+      }
+    }
+  },
+  "model_version": "fan-policy-v1-bec2aad20791",
+  "normalization": "folded into first dense layer; runtime takes raw C and %RH",
+  "profile": "lab-or-30-28-75-70-v1",
+  "purpose": "lab fan action policy imitation",
+  "requested_epochs": 100,
+  "schema_version": 1,
+  "seed": 42,
+  "sha256": "bec2aad20791fa6f8b071bba0472d9a7bbd1b33f252433d33f243c33ec66fc27",
+  "teacher": {
+    "hold": "otherwise; preserve the previous AUTO state",
+    "off": "temperature <= 28 AND humidity <= 70",
+    "on": "temperature >= 30 OR humidity >= 75",
+    "require_both": false
+  },
+  "threshold_boundary_diagnostic": {
+    "conversion": {
+      "class_disagreements": 0,
+      "input": {
+        "dtype": "float32",
+        "shape": [
+          1,
+          2
+        ],
+        "units": [
+          "C",
+          "%RH"
+        ]
+      },
+      "max_probability_absolute_error": 7.3909759521484375e-06,
+      "operators": [
+        {
+          "name": "FULLY_CONNECTED",
+          "version": 1
+        },
+        {
+          "name": "SOFTMAX",
+          "version": 1
+        }
+      ],
+      "output": {
+        "dtype": "float32",
+        "labels": [
+          "OFF",
+          "HOLD",
+          "ON"
+        ],
+        "shape": [
+          1,
+          3
+        ]
+      },
+      "samples": 36
+    },
+    "description": "36 points at/on +/-0.01 of teacher thresholds; deliberately difficult diagnostic, not efficacy validation",
+    "metrics": {
+      "accuracy": 0.7222222222222222,
+      "confusion_matrix_true_rows_predicted_columns": [
+        [
+          0,
+          4,
+          0
+        ],
+        [
+          0,
+          6,
+          6
+        ],
+        [
+          0,
+          0,
+          20
+        ]
+      ],
+      "recall": {
+        "HOLD": 0.5,
+        "OFF": 0.0,
+        "ON": 1.0
+      },
+      "samples": 36,
+      "support": {
+        "HOLD": 12,
+        "OFF": 4,
+        "ON": 20
+      }
+    },
+    "softmax_gate": {
+      "accepted_accuracy": 0.7222222222222222,
+      "accepted_errors": 5,
+      "accepted_samples": 18,
+      "coverage": 0.5,
+      "interpretation": "Uncalibrated softmax gate only; profile/freshness/domain gates are separate.",
+      "minimum_max_softmax": 0.8,
+      "samples": 36
+    }
+  },
+  "training": {
+    "batch_size": 128,
+    "cpu_only": true,
+    "deterministic_ops": true,
+    "early_stopping": {
+      "monitor": "val_loss",
+      "patience": 18,
+      "restore_best_weights": true
+    },
+    "learning_rate": 0.002,
+    "optimizer": "Adam",
+    "threads": 1
+  }
+}

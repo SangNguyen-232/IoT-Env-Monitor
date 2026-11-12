@@ -4,13 +4,16 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "ml_result.h"
 
 struct SharedContext {
     float temperature;
     float humidity;
     bool dhtSampleValid;
     uint32_t dhtSampledAtMs;
-    // Independent soil telemetry; FAN and air-risk inference use DHT20 only.
+    uint32_t sampleSeq = 0;
+    char bootId[33] = {};
+    // Independent soil telemetry; FAN and air-risk rules use DHT20 only.
     int soilMoisture;
     bool soilSampleValid;
     uint32_t soilSampledAtMs;
@@ -23,11 +26,12 @@ struct SharedContext {
     SemaphoreHandle_t semDBUpdate;
     time_t timestampReal;
     suseconds_t timestampRealUs;
-    float mlRollAcc;
+    MlResult ml;
 };
 
 // Read and write under SharedContext::mutexContext.
 extern volatile bool g_fanEventPending;
+extern volatile bool g_aiEventPending;
 
 extern String wifi_ssid;
 extern String wifi_pass;

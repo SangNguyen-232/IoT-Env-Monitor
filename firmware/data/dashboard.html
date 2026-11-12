@@ -15,16 +15,23 @@
       <span class="brand-mark">E</span>
       <span class="brand-name">ESP32 IoT</span>
     </div>
-    <nav class="nav">
-      <a class="nav-item active">
+    <nav class="nav" aria-label="Điều hướng chính">
+      <a class="nav-item active" href="#dashboard" data-view="dashboard" aria-current="page">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg>
         <span>Dashboard</span>
       </a>
-      <a class="nav-item" href="#" id="settingsNavBtn">
+      <div class="nav-group">
+      <button class="nav-item settings-parent" type="button" id="settingsNavBtn" aria-expanded="true" aria-controls="settingsSubnav">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.6 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.6a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/></svg>
         <span>Settings</span>
-      </a>
-      <a class="nav-item" href="javascript:void(0);" onclick="if(document.referrer) { window.location.href = document.referrer; } else { window.history.back(); }">
+      </button>
+        <div class="settings-subnav" id="settingsSubnav" aria-label="Settings">
+          <a class="nav-item nav-child" href="#settings/wifi" data-view="wifi">Cấu hình WiFi</a>
+          <a class="nav-item nav-child" href="#settings/fan" data-view="fan">Cấu hình FAN</a>
+          <a class="nav-item nav-child" href="#settings/tinyml" data-view="tinyml">TinyML</a>
+        </div>
+      </div>
+      <a class="nav-item" href="#" id="backAdminBtn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
         <span>Quay lại Admin</span>
       </a>
@@ -33,9 +40,9 @@
 
   <main class="content">
     <header class="topbar">
-      <h1>Dashboard</h1>
+      <h1 id="pageTitle" tabindex="-1">Dashboard</h1>
     </header>
-
+    <section id="dashboardView" class="app-view" aria-labelledby="pageTitle">
     <section class="stat-grid">
       <div class="stat-card">
         <div class="stat-top">
@@ -124,23 +131,70 @@
     <div class="controls-row">
       <section class="control-row">
         <span class="control-label">FAN</span>
-        <span class="badge badge-fan off" id="fanBadge">OFF</span>
-        <button class="btn-toggle" id="fanToggleBtn">Toggle</button>
+        <span class="badge badge-fan off" id="fanBadge">—</span>
+      </section>
+      <section class="control-row">
+        <span class="control-label">MODE</span>
+        <span class="badge badge-mode" id="modeBadge">—</span>
+      </section>
+    </div>
+    </section>
+    <section id="wifiView" class="app-view" aria-labelledby="pageTitle" hidden>
+      <section class="card wifi-settings-card" aria-labelledby="wifiTitle">
+        <div class="card-header">
+          <h2 id="wifiTitle">Cấu hình WiFi</h2>
+          <button id="wifiRefreshBtn" type="button" class="btn-toggle">Làm mới danh sách</button>
+        </div>
+        <div id="wifiListSection" aria-live="polite"></div>
+      <form id="wifiSettingsForm" class="wifi-settings-form">
+        <label for="wifiSsid">Tên WiFi (SSID)</label>
+        <input type="text" id="wifiSsid" name="ssid">
+
+        <label for="wifiPass">Mật khẩu WiFi</label>
+        <div class="pwd-wrap">
+          <input type="password" id="wifiPass" name="password">
+          <button type="button" class="btn-eye" data-target="wifiPass" aria-label="Hiện/ẩn mật khẩu">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          </button>
+        </div>
+
+        <label for="serverUrl">URL backend (HTTPS ổn định)</label>
+        <input type="url" id="serverUrl" name="server" placeholder="https://your-domain.example">
+
+        <button type="submit" class="btn-toggle">Lưu &amp; Kết nối</button>
+      </form>
+        <p id="wifiSettingsMsg" class="settings-msg" role="status" aria-live="polite"></p>
+      </section>
+    </section>
+    <section id="fanView" class="app-view" aria-labelledby="pageTitle" hidden>
+    <div class="controls-row">
+      <section class="control-row">
+        <span class="control-label">Lệnh quạt</span>
+        <span class="badge badge-fan off" id="fanSettingsBadge">—</span>
+        <button class="btn-toggle" id="fanToggleBtn" disabled>Đổi ON/OFF</button>
       </section>
 
       <section class="control-row">
-        <span class="control-label">MODE</span>
-        <span class="badge badge-mode auto" id="modeBadge">AUTO</span>
-        <button class="btn-toggle" id="modeToggleBtn">Toggle</button>
+        <label class="control-label" for="modeSelect">Chế độ</label>
+        <span class="badge badge-mode" id="modeSettingsBadge">—</span>
+        <select id="modeSelect" aria-describedby="modeHelp">
+          <option value="AUTO">AUTO · Theo ngưỡng</option>
+          <option value="SHADOW">SHADOW · Quan sát AI</option>
+          <option value="AI">AI · Điều khiển thử nghiệm</option>
+          <option value="MANUAL">MANUAL · Thủ công</option>
+        </select>
+        <button class="btn-toggle" id="modeApplyBtn" disabled>Áp dụng</button>
       </section>
     </div>
     <p id="controlStatus" class="control-status" role="status" aria-live="polite"></p>
+    <p id="fanReason" class="fan-config-help">Chưa nhận trạng thái bộ điều khiển.</p>
+    <p id="modeHelp" class="fan-config-help">AUTO dùng ngưỡng đã lưu. SHADOW dùng cùng ngưỡng và chỉ quan sát mô hình. AI dùng đề xuất hợp lệ hoặc luật dự phòng. MANUAL cho phép đổi ON/OFF. AI và SHADOW cần cấu hình dự phòng hợp lệ; thiết bị khởi động lại về AUTO. Tự động giữ mỗi trạng thái ít nhất 10 giây; chuyển chế độ sẽ tắt quạt ngay. Trạng thái quạt là lệnh GPIO, không phải phản hồi tốc độ quay.</p>
 
     <section class="card fan-config-card" aria-labelledby="fanConfigTitle">
       <div class="card-header">
-        <h2 id="fanConfigTitle">Cấu hình FAN tự động</h2>
+        <h2 id="fanConfigTitle">Ngưỡng AUTO / SHADOW và dự phòng cho AI</h2>
       </div>
-      <p class="fan-config-help">Nhập ngưỡng nhiệt độ và độ ẩm không khí cho chế độ AUTO. Mỗi ngưỡng TẮT phải thấp hơn ngưỡng BẬT để tránh relay bật/tắt liên tục.</p>
+      <p class="fan-config-help">Các ngưỡng này dùng cho AUTO / SHADOW và luật dự phòng của chế độ AI. Mỗi ngưỡng TẮT phải thấp hơn ngưỡng BẬT. Điều kiện để AI tham gia điều khiển được giải thích trong <a href="#settings/tinyml" data-view="tinyml">Settings · TinyML</a>.</p>
       <form id="fanConfigForm">
         <fieldset id="fanConfigFields" disabled>
           <legend class="sr-only">Ngưỡng điều khiển FAN</legend>
@@ -171,36 +225,31 @@
       <p id="fanConfigStatus" class="settings-msg" role="status" aria-live="polite">Đang tải cấu hình FAN...</p>
       <p class="fan-config-help">AUTO giữ FAN OFF nếu chưa lưu cấu hình hợp lệ hoặc dữ liệu DHT20 bị lỗi/quá hạn. Cấu hình được lưu trên thiết bị và giữ lại sau khi khởi động lại.</p>
     </section>
-  </main>
-
-    <!-- Settings Modal: Wi-Fi Configuration -->
-  <div id="settingsModal" class="modal-overlay" style="display:none;">
-    <div class="modal-box">
-      <div class="modal-header">
-        <h2>⚙️ Cấu hình WiFi</h2>
-        <button type="button" id="settingsCloseBtn" class="modal-close">&times;</button>
+    </section>
+    <section id="tinymlView" class="app-view" aria-labelledby="pageTitle" hidden>
+    <section class="card ai-card" aria-labelledby="aiTitle">
+      <div class="card-header">
+        <h2 id="aiTitle">TinyML · Thí nghiệm điều khiển quạt</h2>
+        <span id="aiStatus" class="ai-status" role="status">Đang tải</span>
       </div>
-      <form id="wifiSettingsForm" class="modal-form">
-        <label for="wifiSsid">Tên WiFi (SSID)</label>
-        <input type="text" id="wifiSsid" name="ssid">
+      <div class="ai-grid">
+        <div><span class="ai-label">Đề xuất mô hình</span><strong id="aiProposal">—</strong></div>
+        <div><span class="ai-label">Luật lab tham chiếu</span><strong id="aiTeacher">—</strong></div>
+        <div><span class="ai-label">Mức khớp với luật từ lúc khởi động</span><strong id="aiAgreement">—</strong></div>
+      </div>
+      <p id="aiProbabilities" class="ai-detail">Softmax OFF / HOLD / ON: —</p>
+      <p id="aiSample" class="ai-detail">Chưa nhận kết quả suy luận.</p>
+      <p id="aiModel" class="ai-detail">Mô hình: —</p>
+      <details class="ai-explainer">
+        <summary>Cách đọc kết quả và phạm vi thử nghiệm</summary>
+        <p>OFF: đề xuất tắt; HOLD: giữ trạng thái; ON: đề xuất bật. Mô hình mẫu đi kèm học từ dữ liệu tổng hợp theo luật lab: ON khi T ≥ 30°C hoặc RH ≥ 75%; OFF khi T ≤ 28°C và RH ≤ 70%; HOLD trong vùng còn lại. Miền đầu vào: 5–50°C, 20–100% RH.</p>
+        <p>Softmax là đầu ra mô hình, chưa được hiệu chuẩn thành độ tin cậy. Mức khớp với luật không đo hiệu quả thông gió. Chỉ AI hợp lệ với softmax lớn nhất ≥ 0,8 và cấu hình khớp profile mô hình mới được dùng để điều khiển. Với mô hình đi kèm, phải lưu ngưỡng nhiệt độ BẬT/TẮT 30/28°C, độ ẩm BẬT/TẮT 75/70% và điều kiện HOẶC (OR). Nếu khác profile hoặc AI không hợp lệ, chế độ vẫn hiển thị AI nhưng quạt dùng luật dự phòng đã cấu hình.</p>
+        <p>Đây là mô hình giáo dục trong phòng lab. Chưa xác nhận khả năng giảm nhiệt, hút ẩm hoặc tiết kiệm điện. Độ ẩm đất chỉ được giám sát độc lập. Notification trên Dashboard là cảnh báo theo luật, tách biệt với kết quả TinyML.</p>
+      </details>
+    </section>
 
-        <label for="wifiPass">Mật khẩu WiFi</label>
-        <div class="pwd-wrap">
-          <input type="password" id="wifiPass" name="password">
-          <button type="button" class="btn-eye" data-target="wifiPass" aria-label="Hiện/ẩn mật khẩu">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-          </button>
-        </div>
-
-        <label for="serverUrl">URL backend (HTTPS ổn định)</label>
-        <input type="url" id="serverUrl" name="server" placeholder="https://your-domain.example">
-
-        <button type="submit" class="btn-toggle">Lưu &amp; Kết nối</button>
-      </form>
-      <div id="wifiSettingsMsg" class="settings-msg"></div>
-    </div>
-  </div>
-
+    </section>
+  </main>
 </div>
 
 <script>

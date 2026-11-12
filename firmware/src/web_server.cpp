@@ -21,6 +21,10 @@
 #include "message_handler.h"
 #include "secrets.h"
 #include "input_safety.h"
+#include "ai_telemetry.h"
+
+static SharedContext *s_context = nullptr;
+void Webserver_init_context(SharedContext *ctx) { s_context = ctx; }
 
 static bool isAPMode()
 {
@@ -300,6 +304,30 @@ static void registerWebServerHandlers()
         doc["is_ap_mode"] = isAPMode();
         doc["fan_state"] = global_fan_state;
         doc["fan_mode"] = global_fan_mode;
+        doc["fan_reason"] = fan_last_reason;
+        doc["fan_decision_sample_seq"] = fan_decision_sample_seq;
+        doc["fan_decided_uptime_ms"] = fan_decided_uptime_ms;
+        xSemaphoreGive(xMutexFanControl);
+        String payload;
+        serializeJson(doc, payload);
+        auto *response = request->beginResponse(200, "application/json", payload);
+        response->addHeader("Cache-Control", "no-store");
+        request->send(response);
+    });
+
+    server.on("/api/ai-status", HTTP_GET, [](AsyncWebServerRequest *request) {
+        if (!requireDeviceAuth(request)) return;
+        JsonDocument doc;
+        if (!ai_snapshot_to_json(s_context, doc) || !xMutexFanControl ||
+                xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) != pdTRUE) {
+            request->send(503, "text/plain", "status unavailable");
+            return;
+        }
+        doc["fan_state"] = global_fan_state;
+        doc["fan_mode"] = global_fan_mode;
+        doc["fan_reason"] = fan_last_reason;
+        doc["fan_decision_sample_seq"] = fan_decision_sample_seq;
+        doc["fan_decided_uptime_ms"] = fan_decided_uptime_ms;
         xSemaphoreGive(xMutexFanControl);
         String payload;
         serializeJson(doc, payload);
@@ -381,10 +409,9 @@ static void registerWebServerHandlers()
             request->send(503, "text/plain", "fan control unavailable");
             return;
         }
-        const bool wasRequestedOn = fan_manual_control ? fan_manual_state : global_fan_state == "ON";
+        const bool wasRequestedOn = fan_requested_mode == FanMode::Manual ? fan_manual_state : global_fan_state == "ON";
         fan_manual_state = has_param ? temp_state == "ON" : !wasRequestedOn;
-        fan_manual_control = true;
-        global_fan_mode = "MANUAL";
+        fan_requested_mode = FanMode::Manual;
         const String requestedState = fan_manual_state ? "ON" : "OFF";
         xSemaphoreGive(xMutexFanControl);
         // Only task_fan publishes applied output; HTTP acknowledges the request.
@@ -400,37 +427,36 @@ static void registerWebServerHandlers()
         if (has_param) {
             temp_mode = request->getParam("mode")->value();
             temp_mode.toUpperCase();
-            if (temp_mode != "AUTO" && temp_mode != "MANUAL") {
+            if (temp_mode != "AUTO" && temp_mode != "SHADOW" && temp_mode != "AI" && temp_mode != "MANUAL") {
                 request->send(400, "text/plain", "invalid mode");
                 return;
             }
         }
 
-        String current_state, current_mode;
+        String current_mode;
         if (xMutexFanControl != nullptr && xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) == pdTRUE) {
-            if (has_param) {
-                global_fan_mode = temp_mode;
-            } else {
-                global_fan_mode = (global_fan_mode == "MANUAL") ? "AUTO" : "MANUAL";
+            if (!has_param) temp_mode = fan_requested_mode == FanMode::Manual ? "AUTO" : "MANUAL";
+            if ((temp_mode == "AI" || temp_mode == "SHADOW")
+                    && (!fan_config.configured || !fan_config_is_valid(fan_config))) {
+                xSemaphoreGive(xMutexFanControl);
+                request->send(409, "text/plain", "Save a valid AUTO fallback configuration first");
+                return;
             }
-
-            fan_manual_control = (global_fan_mode == "MANUAL");
-            if (fan_manual_control) {
+            const FanMode requested = temp_mode == "MANUAL" ? FanMode::Manual
+                : temp_mode == "AI" ? FanMode::Ai : temp_mode == "SHADOW" ? FanMode::Shadow : FanMode::Auto;
+            if (requested == FanMode::Manual && fan_requested_mode != FanMode::Manual) {
                 fan_manual_state = (global_fan_state == "ON");
             }
-
-            current_state = global_fan_state;
-            current_mode = global_fan_mode;
+            fan_requested_mode = requested;
+            current_mode = fan_mode_name(requested);
             xSemaphoreGive(xMutexFanControl);
         } else {
             request->send(503, "text/plain", "fan control unavailable");
             return;
         }
 
-        Webserver_sendata("{\"fan_state\":\"" + current_state + "\",\"fan_mode\":\"" + current_mode + "\"}");
-
         // task_fan records both mode and applied-output changes in telemetry.
-        auto *response = request->beginResponse(200, "text/plain", current_mode);
+        auto *response = request->beginResponse(202, "text/plain", current_mode);
         response->addHeader("Cache-Control", "no-store");
         request->send(response);
     });

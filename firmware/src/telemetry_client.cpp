@@ -11,6 +11,8 @@
 #include "web_server.h"
 #include "device_config.h"
 #include "fan.h"
+#include "fan_config.h"
+#include "ai_telemetry.h"
 #include "secrets.h"
 #include <sys/time.h>
 
@@ -21,6 +23,7 @@ static int postQHead = 0;
 static int postQCount = 0;
 static unsigned long s_lastDBPostMs_sensor = 0;
 static unsigned long s_lastDBPostMs_fan = 0;
+static unsigned long s_lastDBPostMs_ai = 0;
 
 static String formatTimestamp(time_t t)
 {
@@ -146,7 +149,12 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     bool dhtSampleValid = false;
     uint32_t dhtSampledAtMs = 0;
     int lcdState = 1;
-    float mlRollAcc = 0.0f;
+    MlResult ml;
+    uint32_t sampleSeq = 0;
+    char bootId[33] = {};
+    FanConfig config;
+    String fanReason;
+    uint32_t fanDecisionSeq = 0, fanDecidedAtMs = 0;
     struct timeval tvReal = {0, 0};
     struct timeval tvUp   = {0, 0};
     String fanState;
@@ -162,7 +170,9 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
         dhtSampleValid  = ctx->dhtSampleValid;
         dhtSampledAtMs  = ctx->dhtSampledAtMs;
         lcdState       = ctx->lcdState;
-        mlRollAcc      = ctx->mlRollAcc;
+        ml = ctx->ml;
+        sampleSeq = ctx->sampleSeq;
+        memcpy(bootId, ctx->bootId, sizeof(bootId));
         tvReal.tv_sec  = ctx->timestampReal;
         tvReal.tv_usec = ctx->timestampRealUs;
         xSemaphoreGive(ctx->mutexContext);
@@ -170,10 +180,18 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
         return String();
     }
 
+    if (sampleSeq == 0) return String();
+
     if (xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(2000)) == pdTRUE)
     {
         fanState = global_fan_state;
         modeState = global_fan_mode;
+        // Match the configuration actually consumed by this controller commit,
+        // even if a newer dashboard configuration is awaiting its next cycle.
+        config = fan_decision_config;
+        fanReason = fan_last_reason;
+        fanDecisionSeq = fan_decision_sample_seq;
+        fanDecidedAtMs = fan_decided_uptime_ms;
         xSemaphoreGive(xMutexFanControl);
     } else {
         return String();
@@ -212,8 +230,19 @@ static String buildPayload(SharedContext *ctx, const char *triggerSource)
     doc["MODE_state"] = modeState;
     if (dhtValid) doc["Message"] = ruleStatusLabel(lcdState);
     else doc["Message"] = nullptr;
-    // Score is model/rule agreement (%), not a risk score or held-out accuracy.
-    doc["Score"] = String(mlRollAcc, 2) + "%";
+    // Preserve legacy schema compatibility without mixing old risk agreement
+    // with the new fan-policy experiment. All new model metrics live in ai.
+    doc["Score"] = nullptr;
+    doc["boot_id"] = bootId;
+    doc["sample_seq"] = sampleSeq;
+    doc["sampled_uptime_ms"] = dhtSampledAtMs;
+    doc["fan_reason"] = fanReason;
+    doc["fan_decision_sample_seq"] = fanDecisionSeq;
+    doc["fan_decided_uptime_ms"] = fanDecidedAtMs;
+    JsonDocument configDoc;
+    fan_config_to_json(config, configDoc);
+    doc["fan_config"] = configDoc.as<JsonVariantConst>();
+    ai_result_to_json(doc["ai"].to<JsonObject>(), ml, sampleSeq, dhtSampleValid, dhtSampledAtMs, millis());
     doc["device_id"] = WiFi.macAddress();
     if (WiFi.status() == WL_CONNECTED) doc["lan_ip"] = WiFi.localIP().toString();
     else doc["lan_ip"] = nullptr;
@@ -235,6 +264,7 @@ void task_database(void *pvParameters)
     {
         const bool gotEvent = xSemaphoreTake(ctx->semDBUpdate, pdMS_TO_TICKS(waitMs)) == pdTRUE;
         bool fanEvent = false;
+        bool aiEvent = false;
         bool shouldPost = false;
         const uint32_t now = millis();
         waitMs = 5000U;
@@ -242,26 +272,31 @@ void task_database(void *pvParameters)
         {
             // A newer sensor snapshot must not overwrite a pending FAN event.
             fanEvent = g_fanEventPending;
-            const uint32_t lastPost = fanEvent ? s_lastDBPostMs_fan : s_lastDBPostMs_sensor;
-            shouldPost = (gotEvent || fanEvent) && static_cast<uint32_t>(now - lastPost) >= 200U;
+            aiEvent = !fanEvent && g_aiEventPending;
+            const uint32_t lastPost = fanEvent ? s_lastDBPostMs_fan : aiEvent ? s_lastDBPostMs_ai : s_lastDBPostMs_sensor;
+            shouldPost = (gotEvent || fanEvent || aiEvent) && static_cast<uint32_t>(now - lastPost) >= 200U;
             if (fanEvent) {
                 if (shouldPost) g_fanEventPending = false;
                 else waitMs = 200U;
             }
+            if (aiEvent && shouldPost) g_aiEventPending = false;
+            if (g_fanEventPending || g_aiEventPending || (gotEvent && !shouldPost)) waitMs = 200U;
             xSemaphoreGive(ctx->mutexContext);
         }
 
         if (shouldPost)
         {
-            const String payload = buildPayload(ctx, fanEvent ? "fan" : "sensor");
+            const String payload = buildPayload(ctx, fanEvent ? "fan" : aiEvent ? "ai" : "sensor");
             if (!payload.isEmpty()) {
                 enqueuePost(payload);
                 if (fanEvent) s_lastDBPostMs_fan = millis();
+                else if (aiEvent) s_lastDBPostMs_ai = millis();
                 else s_lastDBPostMs_sensor = millis();
-            } else if (fanEvent) {
+            } else if (fanEvent || aiEvent) {
                 // Retain the event if a complete snapshot/time was unavailable.
                 if (xSemaphoreTake(ctx->mutexContext, portMAX_DELAY) == pdTRUE) {
-                    g_fanEventPending = true;
+                    if (fanEvent) g_fanEventPending = true;
+                    if (aiEvent) g_aiEventPending = true;
                     xSemaphoreGive(ctx->mutexContext);
                 }
                 waitMs = 200U;

@@ -13,11 +13,20 @@ CREATE TABLE IF NOT EXISTS "sensor_logs" (
   "lan_ip" text,
   "received_at" timestamptz DEFAULT NOW(),
   "latency" int,
-  "trigger_source" text
+  "trigger_source" text,
+  "boot_id" text,
+  "sample_seq" bigint,
+  "sampled_uptime_ms" bigint,
+  "ai" jsonb,
+  "fan_reason" text,
+  "fan_config" jsonb,
+  "fan_decision_sample_seq" bigint,
+  "fan_decided_uptime_ms" bigint
 );
 
 CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_received ON sensor_logs (device_id, received_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_up ON sensor_logs (device_id, timestamp_up DESC);
+CREATE INDEX IF NOT EXISTS idx_sensor_logs_device_id ON sensor_logs (device_id, id);
 
 -- password stores a bcrypt hash, never plaintext
 CREATE TABLE IF NOT EXISTS device_credentials (

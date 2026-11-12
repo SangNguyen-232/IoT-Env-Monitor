@@ -410,6 +410,23 @@ html, body {
   color: #fff;
 }
 
+.lab-help { color: var(--muted); font-size: 12px; line-height: 1.65; margin: 10px 0 16px; }
+.lab-export-options { padding: 12px 16px; margin-bottom: 18px; border: 1px solid var(--border); border-radius: var(--radius-sm); }
+.lab-export-options summary { cursor: pointer; font-size: 13px; }
+.lab-export-options .lab-help:last-child { margin-bottom: 0; }
+.lab-export-range { display: flex; flex-wrap: wrap; gap: 12px; }
+.lab-export-range label { display: flex; flex-direction: column; gap: 6px; color: var(--muted); font-size: 12px; }
+.lab-export-range input { min-width: 0; max-width: 100%; padding: 8px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); color: var(--text); color-scheme: dark; }
+.device-ai { border-top: 1px solid var(--border); padding-top: 12px; margin-bottom: 14px; font-size: 12px; line-height: 1.6; color: var(--muted); overflow-wrap: anywhere; }
+.device-ai p { margin-top: 5px; }
+.device-ai strong { color: var(--text); }
+.device-ai-heading { display: flex; gap: 8px; justify-content: space-between; }
+.lab-sample, .lab-legacy, .ai-probabilities { font-size: 11px; }
+.lab-legacy { color: var(--orange); }
+.export-status { color: var(--muted); font-size: 11px; margin: 8px 0; min-height: 16px; }
+.js-lab-export { position: relative; z-index: 1; }
+@media (max-width: 720px) { .lab-export-range input { font-size: 16px; } }
+
 @keyframes barFadeIn {
   from { opacity: 0; transform: translateY(-4px); }
   to { opacity: 1; transform: translateY(0); }
