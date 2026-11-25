@@ -1,59 +1,90 @@
-# Upgrading AI Telemetry Without Losing Historical Data
+# PostgreSQL migrations and telemetry history
 
-Docker only executes scripts mounted under `/docker-entrypoint-initdb.d` when initializing an empty PostgreSQL volume. Rebuilding the backend image does **not** automatically apply schema migrations to an existing data volume. Never run `docker compose down -v` during an upgrade, because `-v` permanently deletes the PostgreSQL volume.
+The project uses PostgreSQL 18. Compose mounts the named volume `fan_pgdata18` at `/var/lib/postgresql`. The PostgreSQL image runs initialization scripts only when the data directory is empty. Subsequent backend builds reuse the existing database. Keep the volume when stopping or upgrading the stack. The Compose `down -v` option removes it. [Project setup](../GUIDE.md) · [Compose configuration](../docker-compose.yml)
 
-## Upgrading an Existing Database Volume
+## Fresh database initialization
 
-Run the commands below from the repository root after verifying the active PostgreSQL container and preparing durable storage for your backup. These commands use the container's configured PostgreSQL environment variables so database credentials are not exposed on the host command line:
+Compose runs the following scripts in order on first initialization.
+
+1. [Base schema](schema/base.sql) creates the telemetry and device credential tables and their indexes.
+2. [001 — authentication](migrations/001_auth.sql) creates system users and per-device access grants.
+3. [003 — sessions](migrations/003_session_login_at.sql) creates the session table and gives new sessions a login timestamp.
+4. [004 — display views](migrations/004_time_display_views.sql) creates read-only views of the five public tables. These format timestamps in the project's Vietnam time zone for display. Applications write to the public tables.
+5. [005 — AI telemetry](migrations/005_ai_telemetry.sql) ensures the experiment columns, constraints and history pagination index exist and refreshes the existing telemetry display view.
+
+[002 — legacy time zones](migrations/002_timezone.sql) is for older databases with timestamps stored without a time zone. It interprets the two legacy sensor timestamps as `Asia/Ho_Chi_Minh` and the user creation timestamp as UTC. The fresh schema already uses `timestamptz` for those fields. Verify the source time zone before using this conversion on imported data.
+
+## Upgrade an existing database
+
+The procedure below applies to a project database that already has the baseline tables and is missing AI telemetry metadata. For earlier installations, first inspect the live schema against the prerequisites above and back up before applying any missing steps. The backend checks the names of the required `sensor_logs` columns at startup. A reported missing column can therefore belong to the baseline or to migration 005.
+
+**1. Pause writes.** Run `docker compose ps` from the repository root to identify the intended PostgreSQL service. For a containerized backend, run `docker compose stop backend`. For a backend running directly on the host, stop that Node process. Pause other clients writing to this database during the upgrade. This also pauses the backend's scheduled retention job.
+
+**2. Back up the database and apply migration 005.** The following Bash block keeps the archive outside the repository in a private directory under your home directory. It prints the directory path and stops at the first failing command. The archive can contain account data, login sessions and telemetry. Keep a copy on durable private storage.
 
 ```bash
-# Stop backend writes and scheduled retention cleanup during backup and migration.
-docker compose stop backend
-backup_dir=$(mktemp -d /tmp/iot-ai-backup.XXXXXX)
-docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$backup_dir/before-ai.dump"
-# Verify that the archive table of contents is readable, then copy it to durable storage.
-docker compose exec -T postgres pg_restore --list < "$backup_dir/before-ai.dump"
-docker compose exec -T postgres sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database/migrations/005_ai_telemetry.sql
-docker compose up -d --build backend
-docker compose logs --tail=80 backend
+(
+  set -eu
+  umask 077
+  backup_dir=$(mktemp -d "$HOME/iot-ai-backup.XXXXXXXX")
+  echo "Backup directory: $backup_dir"
+  docker compose exec -T postgres sh -c 'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$backup_dir/before-ai.dump"
+  docker compose exec -T postgres pg_restore --list < "$backup_dir/before-ai.dump" > "$backup_dir/contents.txt"
+  docker compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < database/migrations/005_ai_telemetry.sql
+)
 ```
 
-Migrations `001` through `004` belong to the baseline schema stack:
+`pg_restore --list` checks that the archive directory is readable. To exercise recovery, restore the dump into a new empty database on a separate PostgreSQL 18 test instance. For example, in a shell configured with the test instance's `PGHOST`, `PGPORT` and `PGUSER`, set `BACKUP_FILE` to the absolute path of the saved dump. The PostgreSQL client commands below stop if the test database name is already in use. The restore checks schema and data under the test role and skips ownership and grants. For a full recovery with original permissions, also provision the original roles and restore their ownership and grants.
 
-- If upgrading from an older installation, inspect the live schema and the header comments inside each migration file before applying them in numerical order.
-- Migration `002_timezone.sql` converts legacy `timestamp without time zone` columns using explicit source time zones (`Asia/Ho_Chi_Minh` for `sensor_logs`, `UTC` for `system_users.created_at`); do not assume time zones for external data imported outside this project.
-- Migration `005_ai_telemetry.sql` runs inside a transaction with `lock_timeout = '10s'`, adds nullable experiment metadata columns, validates constraints, creates `idx_sensor_logs_device_id`, and refreshes `display.sensor_logs` without backfilling synthetic labels onto historical rows.
-- `005_ai_telemetry.sql` is idempotent and safe to re-run. If `lock_timeout` expires, the transaction rolls back cleanly and can be re-executed once blocking queries finish. Index creation and constraint validation may take longer on large tables.
-- At startup (`ensureSchema()`), the backend verifies that every required `sensor_logs` column exists and exits with an actionable migration message if any column is missing.
-- Rolling back to an older backend binary leaves the additive nullable columns harmlessly in place; however, new ESP32 firmware requires the upgraded backend to ingest AI metadata fields.
+```bash
+(
+  set -eu
+  : "${PGHOST:?Set PGHOST to the separate test instance}"
+  : "${PGPORT:?Set PGPORT for that instance}"
+  : "${PGUSER:?Set PGUSER to a role that can create a test database}"
+  : "${BACKUP_FILE:?Set BACKUP_FILE to the saved dump path}"
+  createdb --template=template0 iot_restore_check
+  pg_restore --exit-on-error --no-owner --no-privileges --dbname=iot_restore_check "$BACKUP_FILE"
+  psql -X -v ON_ERROR_STOP=1 -d iot_restore_check -c 'SELECT count(*) AS telemetry_rows FROM public.sensor_logs'
+)
+```
 
-## Fresh Database Initialization
+Compare the restored count and representative records with the source at backup time. The test database remains available for inspection. The archive covers this database's schema and data. PostgreSQL cluster roles and their passwords require separate recovery arrangements.
 
-On a brand-new environment with no existing `fan_pgdata18` volume, running `docker compose up -d --build` automatically executes `database/schema/base.sql` followed by `001_auth.sql`, `003_session_login_at.sql`, `004_time_display_views.sql`, and `005_ai_telemetry.sql`. This initialization sequence applies **only** to empty volumes and does not replace the existing-volume upgrade procedure above.
+**3. Verify the upgrade and resume the original backend.** Migration 005 adds eight nullable columns, enforces range and shape constraints, and creates the `(device_id, id)` index. Existing rows keep NULL for newly added fields. Its transaction has a ten-second lock timeout and can be rerun after a blocking transaction finishes. To inspect the result, run the following read-only query. Expect `sensor_logs_ai_metadata_check` and `sensor_logs_fan_decision_check` to be listed as validated.
 
-## Experiment Telemetry & History Export Contract
+```bash
+docker compose exec -T postgres sh -c 'psql -X -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' <<'SQL'
+SELECT conname, convalidated
+FROM pg_constraint
+WHERE conrelid = 'public.sensor_logs'::regclass
+  AND conname IN ('sensor_logs_ai_metadata_check', 'sensor_logs_fan_decision_check')
+ORDER BY conname;
+SQL
+```
 
-- The current firmware sends `null` for the legacy `Score` column. In the predictive firmware, `ai.rule_class` is the action given by the instantaneous model profile (30/28°C, 75/70% RH, OR). `ai.agreement_pct` counts how often the proposal matches that instantaneous action among the `evaluated_samples` since boot. A proactive ON in the hysteresis band intentionally disagrees with HOLD. Forecast accuracy requires observing a future outcome.
-- The `ai` JSONB field stores the model version, status, proposal, rule class, inference time and raw class scores in `[OFF, HOLD, ON]` order. INT8 softmax outputs are multiples of 1/256. Quantization and saturation can make the sum differ slightly from one. The controller checks the winning raw score against 0.80.
-- Predictive firmware also reports `window_samples` and `window_capacity` (7). A ready result includes `temp_slope_c_min`, `humi_slope_pct_min` (percentage points of RH per minute), `residual_jitter` (dimensionless combined RMS deviation from the fitted temperature and humidity trends, scaled by the 2°C and 5% RH hysteresis widths), and `fan_on_at_sample` (boolean GPIO command recorded at acquisition, before this sample drives a new decision). These four features are null when a result is unavailable. In particular, `warming_up` reports the accumulated count without publishing a prediction. Historical JSON without the predictive fields remains readable. Sites that have applied migration 005 only need the updated backend to accept these JSON keys.
-- **Sample matching**: When `ai.status` is `"ready"`, top-level `sample_seq` and `sampled_uptime_ms` must be present and strictly match `ai.sample_seq` and `ai.sampled_uptime_ms`. Non-ready statuses may retain the previous evaluated sample's identifiers while clearing `predicted_class` and `probabilities` to `null`.
-- **`boot_id`, `sample_seq`, and `sampled_uptime_ms`**: Uniquely identify each sensor acquisition within a single firmware boot session. `sampled_uptime_ms` is a 32-bit `millis()` timestamp that wraps every ~49.7 days. Multiple `sensor`, `fan`, and `ai` telemetry events may reference the same sample.
-- **`received_at` and `timestamp_up`**: Record backend ingestion time and device HTTP upload time, respectively. Do not treat either column as the sensor acquisition timestamp during offline time-series analysis.
-- **`fan_reason` and `fan_config`**: `fan_reason` records the controller's decision code; `fan_config` captures the exact threshold snapshot consumed by `task_fan` for that decision, even if a newly saved dashboard configuration is waiting for the next control cycle. `"MODE_state"` accepts `AUTO`, `SHADOW`, `AI`, or `MANUAL`.
-- **`fan_decision_sample_seq` and `fan_decided_uptime_ms`**: Identify the sensor sample sequence and 32-bit `millis()` timestamp at the most recent fan controller commit. Because sensor/AI state (`mutexContext`) and actuator state (`xMutexFanControl`) are read under separate locks, `fan_decision_sample_seq` can differ from the telemetry row's `sample_seq`. These fields trace software GPIO commands, not tachometer rotation or physical cooling performance. Legacy rows store `null`.
-- **Best-effort transport**: Pending event flags can coalesce while HTTP requests block, and the ESP32 RAM queue (`POST_QUEUE_MAX = 6`) drops the oldest entry when full. Complete capture of every inference or relay transition is not guaranteed. When constructing forecasting windows offline, inspect `boot_id`, `sample_seq`, and `sampled_uptime_ms` to exclude sequence gaps rather than inferring actuation timing from server arrival order.
-- **Retention (`SENSOR_RETENTION_DAYS`)**: Defaults to `30` days, purging expired rows at backend startup and every 6 hours. Set `SENSOR_RETENTION_DAYS=0` to disable automatic deletion during extended lab collection runs, monitor disk usage, and export/back up datasets proactively. Changing `SENSOR_RETENTION_DAYS` cannot recover already-purged rows.
+For the containerized route, run `docker compose up -d --build --wait backend` and inspect `docker compose logs --tail=80 backend`. For the host route, restart the Node backend from the setup guide and open `/healthz` on its listening port. The expected result is HTTP 200 and `{"ok":true}`. The startup retention sweep can remove old rows immediately. Set the intended retention period before restarting. [Backend setup and health checks](../GUIDE.md)
 
-### Paginated History Endpoint (`GET /admin/api/history`)
+## Reading telemetry
 
-Authenticated endpoint:
+- **Acquisition and arrival.** Use `device_id`, `boot_id` and `sample_seq` to group events for one sensor reading. Several `sensor`, `ai` and `fan` rows can share the same acquisition. The field `sampled_uptime_ms` is the acquisition time from the board's 32-bit millisecond clock and wraps after about 49.7 days. With a synchronized clock, `timestamp_real` records sampling time in UTC. The board sets `timestamp_up` when preparing the payload. The backend assigns `received_at` on insert. Queuing and retries can separate these three times.
+- **Model output.** The `ai` JSONB object includes the model version, status, sample identity and inference duration. A ready prediction has temperature and humidity slopes per minute, residual jitter, the fan command at acquisition, the predicted and current reference classes, and INT8 softmax scores in OFF, HOLD, ON order. Scores have 1/256 resolution and can sum to slightly more or less than one. The current firmware needs seven consecutive in-domain samples. A ready result must match the top-level `sample_seq` and `sampled_uptime_ms`. Non-ready results carry null predictions, scores, slopes, jitter and sampled fan command. Their sample identifiers can describe an earlier evaluation.
+- **Agreement.** The legacy `"Score"` column receives NULL from current firmware. The field `ai.agreement_pct` compares the proposal with the **current** reference band over `ai.evaluated_samples` predictions since boot. The forecast target is the band 30 seconds later. A comparison with measured future readings uses the session import workflow. [Model contract and history import](../ml/README.md)
+- **Fan decisions.** `"MODE_state"` records AUTO, SHADOW, AI or MANUAL. `"FAN_state"`, `fan_reason` and `fan_config` describe the applied GPIO command, decision reason and thresholds used at that decision. `fan_decision_sample_seq` and `fan_decided_uptime_ms` identify the controller's sample and decision time. Because acquisition and actuation use separate locks, the decision sequence can differ from the rest of the row. Physical fan motion requires a separate observation.
+- **Gaps and retention.** Multiple pending events can coalesce, and the six-payload RAM queue drops its oldest payload when full. Check sequences and uptimes before reconstructing a continuous series. The backend purges rows using `COALESCE(received_at, timestamp_up)` at startup and every six hours. `SENSOR_RETENTION_DAYS` defaults to 30. A value of 0 disables automatic deletion. Changing the setting affects future sweeps.
+
+## Exporting history
+
+Sign in to the admin dashboard, set the optional **History export range** in the browser's local time, then select **Export JSONL** on the device card. The dashboard requests up to 1,000 rows per page, includes the LAN IP when present and writes one JSON object per event. Old rows keep their original null fields. The dashboard can cancel an export before download.
+
+For an API client using the same login session, begin with a request such as the following. Replace `guide-demo` with the device ID you want to export.
 
 ```text
-GET /admin/api/history?device_id=<DEVICE_ID>&limit=1000
+GET /admin/api/history?device_id=guide-demo&limit=500
 ```
 
-- **Optional filters**: `lan_ip`, `from` (inclusive), and `to` (exclusive). Timestamps must be valid ISO 8601 strings with `Z` or an explicit UTC offset (for example, `2026-11-11T08:00:00%2B07:00`). Time filters apply to `COALESCE(received_at, timestamp_up)`.
-- **Cursor pagination**: `limit` accepts `1..1000` (default `500`). Responses have the shape `{ rows, next_after_id, until_id }` ordered by ascending `id`.
-- When `next_after_id` is non-null, request the next page using the same filter parameters plus `after_id=<next_after_id>&until_id=<until_id>`. Pagination terminates when `next_after_id` is `null`.
-- **`until_id` high-water mark**: Bounds the export so ordinary new inserts do not extend an in-progress export indefinitely. It is **not** an immutable MVCC snapshot: concurrent deletions, retention purges, or late-committing transactions can still affect visible rows. For a strictly immutable archive, stop writes/retention before exporting or take a `pg_dump` backup.
-- **Access control & legacy rows**: RBAC grants (`system_users` / `user_devices`) are enforced per account, `device_id`, and `lan_ip`. Legacy rows lacking AI metadata retain `null` fields and are never synthesized into AI samples.
+- The response contains `rows`, `next_after_id` and `until_id`. Rows are in ascending database ID order. The default limit is 500, with an allowed range of 1 through 1,000.
+- On later pages, keep the device, filters and original `until_id`, and pass the returned `next_after_id` as `after_id`. A null `next_after_id` ends the export. A positive `after_id` requires an `until_id`.
+- Optional filters are `lan_ip`, `from` (inclusive) and `to` (exclusive). The time filters use the same receipt-time expression as retention. Supply an ISO timestamp with seconds and a zone, such as `2026-01-01T08:00:00Z`. Encode a plus sign in a numeric UTC offset as `%2B`.
+- Admins can access all devices. Users see rows authorized by their device and LAN-IP grants. A grant with an empty LAN IP covers that device across addresses. Omitting the IP filter still enforces these grants.
+- The first response fixes a maximum row ID so ordinary subsequent inserts do not extend the export. Concurrent deletions, retention and late-committing inserts can still affect later pages. Use a database backup for a transaction-consistent archive.

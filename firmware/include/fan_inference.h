@@ -7,7 +7,7 @@
 #include "tensorflow/lite/micro/micro_interpreter.h"
 #include "tensorflow/lite/schema/schema_generated.h"
 
-// Used by the device and the host replay. Keep a single instance in static storage.
+// Keep the interpreter and its tensor arena in static storage on the device.
 class FanInference {
 public:
     bool begin()

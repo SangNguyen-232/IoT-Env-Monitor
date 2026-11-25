@@ -1,4 +1,4 @@
-"""Feature and forecast contract shared by training, history import and replay."""
+"""Feature and forecast contract shared by training, model export and history import."""
 import numpy as np
 
 LABELS = ("OFF", "HOLD", "ON")

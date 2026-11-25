@@ -1,4 +1,4 @@
--- Run after the backend has initialized all five public tables (including login_at).
+-- Apply after base.sql, 001_auth.sql and 003_session_login_at.sql create the public tables.
 -- Display timestamps in Vietnam time without changing stored types or precision.
 -- session.expire is a local timestamp written in the project's UTC+7 DB timezone.
 -- latency and cookie.originalMaxAge are durations and must remain numeric.
@@ -41,7 +41,7 @@ BEGIN
     WHERE c.table_schema = 'public' AND c.table_name = source_table;
 
     IF display_columns IS NULL THEN
-      RAISE EXCEPTION 'Missing public table %. Start the backend before running this migration.', source_table;
+      RAISE EXCEPTION 'Missing public table %. Apply the prerequisite schema scripts before this migration.', source_table;
     END IF;
 
     -- OFFSET makes every view read-only; permissions still use the caller's rights.

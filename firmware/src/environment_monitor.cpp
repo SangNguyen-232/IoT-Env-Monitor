@@ -35,8 +35,10 @@ void temp_humi_monitor(void *pvParameters)
     lcd.backlight();
     lcd.clear();
     // Startup greeting runs once when this task starts, never in the sample loop.
-    lcd.setCursor(1, 0);
-    lcd.print("IOT ASSIGNMENT");
+    lcd.setCursor(0, 0);
+    lcd.print("   IOT    ENV   ");
+    lcd.setCursor(0, 1);
+    lcd.print("  MONITOR  SYS  ");
     vTaskDelay(pdMS_TO_TICKS(5000));
     lcd.clear();
 

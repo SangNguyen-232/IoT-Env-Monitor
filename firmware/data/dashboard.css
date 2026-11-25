@@ -15,7 +15,6 @@
   --orange: #f5a524;
   --orange-soft: rgba(245, 165, 36, 0.16);
   --red: #ef4444;
-  --red-soft: rgba(239, 68, 68, 0.16);
   --purple: #b06af7;
   --purple-soft: rgba(176, 106, 247, 0.18);
   --blue: #4aa3ff;
@@ -424,7 +423,7 @@ html, body {
 .fan-config-card > .fan-config-help:last-child { margin-bottom: 0; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
-.ai-card { margin-bottom: 20px; padding: 20px; }
+.ai-card { padding: 20px; }
 .ai-card .card-header { flex-wrap: wrap; gap: 10px; }
 .ai-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 16px 0; }
 .ai-grid > div { min-width: 0; }
@@ -459,15 +458,11 @@ html, body {
   .app { flex-direction: column; }
   .sidebar {
     width: 100%;
-    flex-direction: column;
     align-items: stretch;
     gap: 14px;
   }
-  .nav { flex-direction: column; }
-  .settings-subnav { margin-left: 28px; }
   .topbar h1 { overflow-wrap: anywhere; }
   .content { padding: 18px; }
-  .wifi-settings-form input { font-size: 16px; }
 }
 
 /* ---------- WiFi settings form ---------- */
@@ -568,4 +563,3 @@ html, body {
 .wifi-network-row span { min-width: 0; overflow-wrap: anywhere; }
 .wifi-network-row button { flex-shrink: 0; }
 .wifi-settings-form input { min-width: 0; width: 100%; }
-#tinymlView .ai-card { margin-bottom: 0; }

@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Đăng nhập – ESP32 IoT</title>
+<title>Sign in – ESP32 IoT</title>
 <style>
   :root {
     --bg:       #0b1220;
@@ -239,19 +239,19 @@
   </div>
 
   <div class="login-card">
-    <div class="login-title">Đăng nhập hệ thống</div>
-    <div class="login-sub">Nhập tài khoản được cấp để tiếp tục</div>
+    <div class="login-title">Sign in</div>
+    <div class="login-sub">Sign in with the account provided by your administrator.</div>
 
     <div class="field">
-      <label for="username">Tên đăng nhập</label>
+      <label for="username">Username</label>
       <input type="text" id="username" placeholder="username" autocomplete="username" autofocus />
     </div>
 
     <div class="field">
-      <label for="password">Mật khẩu</label>
+      <label for="password">Password</label>
       <div class="pwd-wrap">
         <input type="password" id="password" placeholder="••••••••" autocomplete="current-password" />
-        <button type="button" class="btn-eye" data-target="password" aria-label="Hiện/ẩn mật khẩu">
+        <button type="button" class="btn-eye" data-target="password" aria-label="Show or hide password">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
@@ -259,13 +259,13 @@
 
     <button class="btn-login" id="btnSubmit">
       <span class="btn-spinner"></span>
-      <span class="btn-text">Đăng nhập</span>
+      <span class="btn-text">Sign in</span>
     </button>
 
     <div class="login-err" id="loginErr"></div>
   </div>
 
-  <div class="login-note">Tài khoản do quản trị viên cấp. Đăng ký công khai đã tắt.</div>
+  <div class="login-note">Contact your administrator to request an account.</div>
 
 </div>
 
@@ -296,7 +296,7 @@
     var password = passwordEl.value;
 
     if (!username || !password) {
-      setError('Vui lòng nhập tên đăng nhập và mật khẩu.');
+      setError('Enter your username and password.');
       return;
     }
 
@@ -313,14 +313,14 @@
         if (result.data.ok) {
           window.location.href = '/admin/admin.html';
         } else {
-          setError(result.data.error || 'Đăng nhập thất bại.');
+          setError(result.data.error || 'Sign-in failed.');
           passwordEl.value = '';
           passwordEl.focus();
         }
       })
       .catch(function () {
         setLoading(false);
-        setError('Không kết nối được server. Thử lại sau.');
+        setError('Unable to connect to the server. Try again later.');
       });
   }
 

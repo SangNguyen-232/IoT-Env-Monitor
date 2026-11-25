@@ -143,7 +143,7 @@ function clearLoginFailures(req) {
 
 function rateLimitLogin(req, res, next) {
   if (loginBlocked(req)) {
-    return res.status(429).json({ error: 'Quá nhiều lần thử. Vui lòng thử lại sau.' });
+    return res.status(429).json({ error: 'Too many attempts. Try again later.' });
   }
   next();
 }
@@ -165,7 +165,7 @@ function requireLogin(req, res, next) {
 
 function requireAdmin(req, res, next) {
   if (req.session && req.session.user && req.session.user.role === 'admin') return next();
-  res.status(403).json({ error: 'Chỉ Admin mới có quyền thực hiện thao tác này.' });
+  res.status(403).json({ error: 'Administrator access is required.' });
 }
 
 function requireSensorKey(req, res, next) {
@@ -286,7 +286,7 @@ app.post('/login', rateLimitLogin, async (req, res) => {
   try {
     const { username, password } = req.body;
     if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password) {
-      return res.status(400).json({ error: 'Vui lòng nhập đầy đủ thông tin.' });
+      return res.status(400).json({ error: 'Enter your username and password.' });
     }
 
     const result = await pool.query(
@@ -296,14 +296,14 @@ app.post('/login', rateLimitLogin, async (req, res) => {
 
     if (result.rows.length === 0) {
       recordLoginFailure(req);
-      return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng.' });
+      return res.status(401).json({ error: 'Incorrect username or password.' });
     }
 
     const user = result.rows[0];
     const check = await verifyPassword(password, user.password);
     if (!check.ok) {
       recordLoginFailure(req);
-      return res.status(401).json({ error: 'Tên đăng nhập hoặc mật khẩu không đúng.' });
+      return res.status(401).json({ error: 'Incorrect username or password.' });
     }
 
     clearLoginFailures(req);
@@ -321,7 +321,7 @@ app.post('/login', rateLimitLogin, async (req, res) => {
     res.json({ ok: true, role: user.role, username: user.username });
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: 'Tài khoản hoặc mật khẩu không đúng.' });
+    res.status(500).json({ error: 'Unable to complete sign-in.' });
   }
 });
 
@@ -467,7 +467,7 @@ app.get('/admin/api/history', requireLogin, async (req, res) => {
   if (!query) return res.status(400).json({ error: 'invalid history query' });
   try {
     if (!(await userCanAccessDevice(req, query.deviceId, query.lanIp))) {
-      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+      return res.status(403).json({ error: 'You do not have access to this device.' });
     }
     const result = await pool.query({
       text: `WITH boundary AS (
@@ -547,7 +547,7 @@ app.post('/admin/api/devices/:device_id/ticket', requireLogin, rateLimitLogin, a
       lanIp = (ipRow.rows[0] && ipRow.rows[0].lan_ip) || '';
     }
     if (!(await userCanAccessDevice(req, device_id, lanIp))) {
-      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+      return res.status(403).json({ error: 'You do not have access to this device.' });
     }
     const { password } = req.body;
     const credResult = await pool.query(
@@ -594,16 +594,16 @@ app.post('/admin/api/devices/:device_id/access-request', requireLogin, async (re
     const { device_id } = req.params;
     const u = req.session.user;
     if (u.role === 'admin') {
-      return res.status(400).json({ error: 'Admin không cần gửi yêu cầu.' });
+      return res.status(400).json({ error: 'Administrators already have device access.' });
     }
     const lanIp = sanitizeLanIp(req.body.lan_ip);
     if (!lanIp) return res.status(400).json({ error: 'invalid lan_ip' });
     if (!(await userCanAccessDevice(req, device_id, lanIp))) {
-      return res.status(403).json({ error: 'Không có quyền truy cập thiết bị này.' });
+      return res.status(403).json({ error: 'You do not have access to this device.' });
     }
     const has = await pool.query('SELECT 1 FROM device_credentials WHERE device_id = $1', [device_id]);
     if (has.rowCount > 0) {
-      return res.status(400).json({ error: 'Thiết bị đã có mật khẩu.' });
+      return res.status(400).json({ error: 'This device already has a password.' });
     }
     pruneAccessRequests();
     for (const r of accessRequests.values()) {
@@ -648,7 +648,7 @@ app.post('/admin/api/access-requests/:id/decision', requireLogin, requireAdmin, 
   pruneAccessRequests();
   const r = accessRequests.get(req.params.id);
   if (!r || r.status !== 'pending') {
-    return res.status(404).json({ error: 'Yêu cầu không còn hiệu lực.' });
+    return res.status(404).json({ error: 'This request has expired.' });
   }
   r.status = (req.body && req.body.approve === true) ? 'approved' : 'denied';
   r.updatedAt = Date.now();
@@ -715,10 +715,10 @@ app.post('/admin/api/users', requireLogin, requireAdmin, async (req, res) => {
   try {
     const { username, password, role } = req.body;
     if (typeof username !== 'string' || !username.trim() || typeof password !== 'string' || !password || !['admin', 'user'].includes(role)) {
-      return res.status(400).json({ error: 'Thiếu thông tin hoặc role không hợp lệ.' });
+      return res.status(400).json({ error: 'Missing account information or invalid role.' });
     }
     if (password.length < 6) {
-      return res.status(400).json({ error: 'Mật khẩu phải có ít nhất 6 ký tự.' });
+      return res.status(400).json({ error: 'The password must contain at least 6 characters.' });
     }
     await pool.query(
       'INSERT INTO system_users (username, password, role) VALUES ($1, $2, $3)',
@@ -726,7 +726,7 @@ app.post('/admin/api/users', requireLogin, requireAdmin, async (req, res) => {
     );
     res.sendStatus(201);
   } catch (err) {
-    if (err.code === '23505') return res.status(409).json({ error: 'Tên đăng nhập đã tồn tại.' });
+    if (err.code === '23505') return res.status(409).json({ error: 'That username is already in use.' });
     console.error(err);
     res.status(500).json({ error: err.message });
   }
@@ -749,7 +749,7 @@ app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
   const userId = Number(req.params.id);
   const list = (req.body || {}).devices;
   if (!Number.isInteger(userId) || userId < 1 || !Array.isArray(list)) {
-    return res.status(400).json({ error: 'Dữ liệu không hợp lệ.' });
+    return res.status(400).json({ error: 'Invalid data.' });
   }
   const seen = new Set();
   const ids = [];
@@ -770,7 +770,7 @@ app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
     const u = await client.query('SELECT 1 FROM system_users WHERE id = $1', [userId]);
     if (u.rowCount === 0) {
       await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Không tìm thấy tài khoản.' });
+      return res.status(404).json({ error: 'Account not found.' });
     }
     await client.query('DELETE FROM user_devices WHERE user_id = $1', [userId]);
     if (ids.length) {
@@ -782,7 +782,7 @@ app.put('/admin/api/users/:id/devices', requireLogin, requireAdmin, async (req, 
     await client.query('COMMIT');
     res.sendStatus(200);
   } catch (err) {
-    if (client) { try { await client.query('ROLLBACK'); } catch (e) {} }
+    if (client) { try { await client.query('ROLLBACK'); } catch {} }
     console.error(err);
     res.status(500).json({ error: err.message });
   } finally {

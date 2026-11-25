@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -16,7 +16,7 @@
       ESP32 IoT &mdash; Admin Dashboard
     </h1>
     <div class="header-right">
-      <span class="refresh-info" id="lastRefresh">Đang tải...</span>
+      <span class="refresh-info" id="lastRefresh">Loading...</span>
       <button class="btn-refresh" id="btnRefresh">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
              stroke-linecap="round" stroke-linejoin="round">
@@ -25,7 +25,7 @@
           <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/>
           <path d="M3 21v-5h5"/>
         </svg>
-        Làm mới
+        Refresh
       </button>
     </div>
   </header>
@@ -41,7 +41,7 @@
         </svg>
       </div>
       <div>
-        <div class="summary-label">Tổng thiết bị</div>
+        <div class="summary-label">Total devices</div>
         <div class="summary-value" id="sumTotal">—</div>
       </div>
     </div>
@@ -81,28 +81,28 @@
         </svg>
       </div>
       <div>
-        <div class="summary-label">Thời gian</div>
+        <div class="summary-label">Time</div>
         <div class="summary-value" id="sumTime">--:--:--</div>
       </div>
     </div>
   </div>
 
   <!-- Device list -->
-  <div class="section-title">Thiết bị · Giám sát TinyML</div>
-  <p class="lab-help">Mỗi thẻ hiển thị đề xuất mô hình, luật tham chiếu và lệnh GPIO gần nhất. Firmware dự báo INT8 dùng 7 mẫu DHT20 liên tiếp cho chân trời 30 giây. Trong SHADOW, ngưỡng đã lưu quyết định lệnh quạt. Trong AI, bộ giám sát kiểm tra hồ sơ OR 30/28°C, 75/70% RH và điểm softmax trước khi cho phép bật đón đầu.</p>
+  <div class="section-title">Devices · TinyML monitoring</div>
+  <p class="lab-help">Each card shows the model proposal, reference rule and latest GPIO command. The INT8 model uses seven consecutive DHT20 samples to forecast 30 seconds ahead. SHADOW mode controls the fan using the saved thresholds. In AI mode, the controller checks the OR profile (30/28°C and 75/70% RH) and the softmax score before allowing an early start.</p>
   <details class="lab-export-options">
-    <summary>Khoảng thời gian xuất dữ liệu lab</summary>
-    <p class="lab-help">Để trống để xuất toàn bộ lịch sử còn lưu. Khoảng thời gian dùng múi giờ của trình duyệt, bao gồm mốc đầu và loại trừ mốc cuối. Để tạo nhãn dự báo từ JSONL, chọn phiên đã dùng firmware INT8. Công cụ nhập cần đủ 7 mẫu đầu vào và 30 giây theo dõi tiếp theo có cùng lệnh quạt tại các lần lấy mẫu.</p>
+    <summary>History export range</summary>
+    <p class="lab-help">Leave the dates blank to export all retained history. Dates use your browser's time zone. The start is inclusive and the end is exclusive. To create forecast labels from JSONL, select a session recorded by the INT8 firmware. The importer requires seven input samples and a further 30 seconds of observations with the same fan command at each sample in the forecast interval.</p>
     <div class="lab-export-range">
-      <label for="exportFrom">Từ <input id="exportFrom" type="datetime-local" /></label>
-      <label for="exportTo">Đến <input id="exportTo" type="datetime-local" /></label>
+      <label for="exportFrom">From <input id="exportFrom" type="datetime-local" /></label>
+      <label for="exportTo">To <input id="exportTo" type="datetime-local" /></label>
     </div>
-    <p class="lab-help">Lần xuất có mốc ID cuối cố định; dữ liệu bị xóa hoặc hết hạn trong lúc xuất có thể không còn trong tệp.</p>
+    <p class="lab-help">The export uses a fixed upper record ID. Rows deleted during export, including expired rows removed by retention, may be missing from the file.</p>
   </details>
   <div class="device-grid" id="deviceGrid">
     <div class="state-box">
       <div class="spinner"></div>
-      <span>Đang tải dữ liệu...</span>
+      <span>Loading data...</span>
     </div>
   </div>
 
@@ -112,7 +112,7 @@
 <div id="deviceLoginModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box">
     <div class="login-modal-header">
-      <h2>🔐 Xác thực thiết bị</h2>
+      <h2>🔐 Device sign-in</h2>
       <button type="button" id="loginModalClose" class="login-modal-close">&times;</button>
     </div>
     <div class="login-device-id" id="loginDeviceId"></div>
@@ -120,15 +120,15 @@
     <!-- Login Area -->
     <div id="loginSection">
       <div class="login-field">
-        <label for="loginPasswordInput">Mật khẩu</label>
+        <label for="loginPasswordInput">Password</label>
         <div class="pwd-wrap">
-          <input type="password" id="loginPasswordInput" placeholder="Nhập mật khẩu..." autocomplete="current-password" />
-          <button type="button" class="btn-eye" data-target="loginPasswordInput" aria-label="Hiện/ẩn mật khẩu">
+          <input type="password" id="loginPasswordInput" placeholder="Enter password..." autocomplete="current-password" />
+          <button type="button" class="btn-eye" data-target="loginPasswordInput" aria-label="Show or hide password">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
       </div>
-      <button type="button" class="login-submit-btn" id="loginSubmitBtn">Đăng nhập</button>
+      <button type="button" class="login-submit-btn" id="loginSubmitBtn">Sign in</button>
       <div class="login-msg" id="loginMsg"></div>
     </div>
   </div>
@@ -138,7 +138,7 @@
 <div id="adminDeviceModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box admin-modal-box">
     <div class="login-modal-header">
-      <h2>⚙ Quản lý thiết bị</h2>
+      <h2>⚙ Manage device</h2>
       <button type="button" id="adminModalClose" class="login-modal-close">&times;</button>
     </div>
     <div class="login-device-id" id="adminModalDeviceId"></div>
@@ -146,28 +146,28 @@
     <!-- Go to Dashboard -->
     <button type="button" class="login-submit-btn admin-enter-btn" id="adminEnterDashboardBtn">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;"><path d="M5 12h14M13 6l6 6-6 6"/></svg>
-      Vào Dashboard
+      Open dashboard
     </button>
 
     <hr class="login-divider" style="margin-top:14px;" />
 
     <!-- Set/Change Password -->
-    <div class="admin-pwd-section-title" id="adminPwdSectionTitle">Đặt mật khẩu thiết bị</div>
+    <div class="admin-pwd-section-title" id="adminPwdSectionTitle">Set device password</div>
     <div class="login-field" style="margin-top:8px;">
-      <label for="adminNewPasswordInput">Mật khẩu mới</label>
+      <label for="adminNewPasswordInput">New password</label>
       <div class="pwd-wrap">
-        <input type="password" id="adminNewPasswordInput" placeholder="Nhập mật khẩu mới..." autocomplete="new-password" />
-        <button type="button" class="btn-eye" data-target="adminNewPasswordInput" aria-label="Hiện/ẩn mật khẩu">
+        <input type="password" id="adminNewPasswordInput" placeholder="Enter new password..." autocomplete="new-password" />
+        <button type="button" class="btn-eye" data-target="adminNewPasswordInput" aria-label="Show or hide password">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
     </div>
-    <button type="button" class="login-submit-btn admin-save-pwd-btn" id="adminSavePasswordBtn">Lưu mật khẩu</button>
+    <button type="button" class="login-submit-btn admin-save-pwd-btn" id="adminSavePasswordBtn">Save password</button>
     <div class="login-msg" id="adminPwdMsg"></div>
 
     <!-- Delete Password (shown only when device already has a password) -->
     <div id="adminDeletePwdSection" style="display:none; margin-top:10px;">
-      <button type="button" class="admin-delete-pwd-btn" id="adminDeletePasswordBtn">🗑 Xóa mật khẩu thiết bị</button>
+      <button type="button" class="admin-delete-pwd-btn" id="adminDeletePasswordBtn">🗑 Delete device password</button>
     </div>
   </div>
 </div>
@@ -176,15 +176,15 @@
 <div id="assignModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box assign-modal-box">
     <div class="login-modal-header">
-      <h2>👥 Phân quyền thiết bị</h2>
+      <h2>👥 Assign device access</h2>
       <button type="button" id="assignModalClose" class="login-modal-close">&times;</button>
     </div>
     <div class="login-field">
-      <label for="assignUserSelect">Tài khoản (User)</label>
+      <label for="assignUserSelect">User account</label>
       <select id="assignUserSelect"></select>
     </div>
     <div class="assign-device-list" id="assignDeviceList"></div>
-    <button type="button" class="login-submit-btn" id="assignSaveBtn">Lưu phân quyền</button>
+    <button type="button" class="login-submit-btn" id="assignSaveBtn">Save assignments</button>
     <div class="login-msg" id="assignMsg"></div>
   </div>
 </div>
@@ -193,23 +193,23 @@
 <div id="createUserModal" class="login-modal-overlay" style="display:none;">
   <div class="login-modal-box">
     <div class="login-modal-header">
-      <h2>➕ Tạo tài khoản User</h2>
+      <h2>➕ Create user account</h2>
       <button type="button" id="createUserModalClose" class="login-modal-close">&times;</button>
     </div>
     <div class="login-field">
-      <label for="createUserName">Tên đăng nhập</label>
+      <label for="createUserName">Username</label>
       <input type="text" id="createUserName" placeholder="username" autocomplete="off" />
     </div>
     <div class="login-field">
-      <label for="createUserPassword">Mật khẩu (tối thiểu 6 ký tự)</label>
+      <label for="createUserPassword">Password (at least 6 characters)</label>
       <div class="pwd-wrap">
-        <input type="password" id="createUserPassword" placeholder="Nhập mật khẩu..." autocomplete="new-password" />
-        <button type="button" class="btn-eye" data-target="createUserPassword" aria-label="Hiện/ẩn mật khẩu">
+        <input type="password" id="createUserPassword" placeholder="Enter password..." autocomplete="new-password" />
+        <button type="button" class="btn-eye" data-target="createUserPassword" aria-label="Show or hide password">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
         </button>
       </div>
     </div>
-    <button type="button" class="login-submit-btn" id="createUserSubmitBtn">Tạo tài khoản</button>
+    <button type="button" class="login-submit-btn" id="createUserSubmitBtn">Create account</button>
     <div class="login-msg" id="createUserMsg"></div>
   </div>
 </div>

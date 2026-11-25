@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="vi">
+<html lang="en">
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -15,7 +15,7 @@
       <span class="brand-mark">E</span>
       <span class="brand-name">ESP32 IoT</span>
     </div>
-    <nav class="nav" aria-label="Điều hướng chính">
+    <nav class="nav" aria-label="Main navigation">
       <a class="nav-item active" href="#dashboard" data-view="dashboard" aria-current="page">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V9.5"/></svg>
         <span>Dashboard</span>
@@ -26,14 +26,14 @@
         <span>Settings</span>
       </button>
         <div class="settings-subnav" id="settingsSubnav" aria-label="Settings">
-          <a class="nav-item nav-child" href="#settings/wifi" data-view="wifi">Cấu hình WiFi</a>
-          <a class="nav-item nav-child" href="#settings/fan" data-view="fan">Cấu hình FAN</a>
+          <a class="nav-item nav-child" href="#settings/wifi" data-view="wifi">WiFi</a>
+          <a class="nav-item nav-child" href="#settings/fan" data-view="fan">Fan</a>
           <a class="nav-item nav-child" href="#settings/tinyml" data-view="tinyml">TinyML</a>
         </div>
       </div>
       <a class="nav-item" href="#" id="backAdminBtn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
-        <span>Quay lại Admin</span>
+        <span>Back to Admin</span>
       </a>
     </nav>
   </aside>
@@ -114,7 +114,7 @@
         </div>
       </section>
 
-      <section class="card map-card">
+      <section class="card">
         <div class="card-header">
           <h2>
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-7.5 7-12a7 7 0 1 0-14 0c0 4.5 7 12 7 12Z"/><circle cx="12" cy="9" r="2.5"/></svg>
@@ -142,26 +142,26 @@
     <section id="wifiView" class="app-view" aria-labelledby="pageTitle" hidden>
       <section class="card wifi-settings-card" aria-labelledby="wifiTitle">
         <div class="card-header">
-          <h2 id="wifiTitle">Cấu hình WiFi</h2>
-          <button id="wifiRefreshBtn" type="button" class="btn-toggle">Làm mới danh sách</button>
+          <h2 id="wifiTitle">WiFi</h2>
+          <button id="wifiRefreshBtn" type="button" class="btn-toggle">Refresh list</button>
         </div>
         <div id="wifiListSection" aria-live="polite"></div>
       <form id="wifiSettingsForm" class="wifi-settings-form">
-        <label for="wifiSsid">Tên WiFi (SSID)</label>
+        <label for="wifiSsid">WiFi network name (SSID)</label>
         <input type="text" id="wifiSsid" name="ssid">
 
-        <label for="wifiPass">Mật khẩu WiFi</label>
+        <label for="wifiPass">WiFi password</label>
         <div class="pwd-wrap">
           <input type="password" id="wifiPass" name="password">
-          <button type="button" class="btn-eye" data-target="wifiPass" aria-label="Hiện/ẩn mật khẩu">
+          <button type="button" class="btn-eye" data-target="wifiPass" aria-label="Show or hide password">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           </button>
         </div>
 
-        <label for="serverUrl">URL backend (HTTPS ổn định)</label>
+        <label for="serverUrl">Backend URL (stable HTTPS address)</label>
         <input type="url" id="serverUrl" name="server" placeholder="https://your-domain.example">
 
-        <button type="submit" class="btn-toggle">Lưu &amp; Kết nối</button>
+        <button type="submit" class="btn-toggle">Save &amp; connect</button>
       </form>
         <p id="wifiSettingsMsg" class="settings-msg" role="status" aria-live="polite"></p>
       </section>
@@ -169,86 +169,86 @@
     <section id="fanView" class="app-view" aria-labelledby="pageTitle" hidden>
     <div class="controls-row">
       <section class="control-row">
-        <span class="control-label">Lệnh quạt</span>
+        <span class="control-label">Fan command</span>
         <span class="badge badge-fan off" id="fanSettingsBadge">—</span>
-        <button class="btn-toggle" id="fanToggleBtn" disabled>Đổi ON/OFF</button>
+        <button class="btn-toggle" id="fanToggleBtn" disabled>Toggle ON/OFF</button>
       </section>
 
       <section class="control-row">
-        <label class="control-label" for="modeSelect">Chế độ</label>
+        <label class="control-label" for="modeSelect">Mode</label>
         <span class="badge badge-mode" id="modeSettingsBadge">—</span>
         <select id="modeSelect" aria-describedby="modeHelp">
-          <option value="AUTO">AUTO · Theo ngưỡng</option>
-          <option value="SHADOW">SHADOW · Quan sát AI</option>
-          <option value="AI">AI · Điều khiển thử nghiệm</option>
-          <option value="MANUAL">MANUAL · Thủ công</option>
+          <option value="AUTO">AUTO · Saved thresholds</option>
+          <option value="SHADOW">SHADOW · Observe AI</option>
+          <option value="AI">AI · Experimental control</option>
+          <option value="MANUAL">MANUAL · Direct control</option>
         </select>
-        <button class="btn-toggle" id="modeApplyBtn" disabled>Áp dụng</button>
+        <button class="btn-toggle" id="modeApplyBtn" disabled>Apply</button>
       </section>
     </div>
     <p id="controlStatus" class="control-status" role="status" aria-live="polite"></p>
-    <p id="fanReason" class="fan-config-help">Chưa nhận trạng thái bộ điều khiển.</p>
-    <p id="modeHelp" class="fan-config-help">AUTO dùng ngưỡng đã lưu. SHADOW dùng cùng ngưỡng và chỉ quan sát mô hình. AI dùng đề xuất hợp lệ hoặc luật dự phòng. MANUAL cho phép đổi ON/OFF. AI và SHADOW cần cấu hình dự phòng hợp lệ; thiết bị khởi động lại về AUTO. Tự động giữ mỗi trạng thái ít nhất 10 giây; chuyển chế độ sẽ tắt quạt ngay. Trạng thái quạt là lệnh GPIO, không phải phản hồi tốc độ quay.</p>
+    <p id="fanReason" class="fan-config-help">Waiting for controller status.</p>
+    <p id="modeHelp" class="fan-config-help">AUTO uses your saved thresholds. SHADOW uses the same thresholds and displays the model’s proposal. AI uses eligible proposals and falls back to the saved thresholds. Switch to MANUAL to toggle the fan yourself. AI and SHADOW require valid thresholds. The device starts in AUTO after each reboot. Automatic control normally holds each state for at least 10 seconds. A mode change switches the fan off. The displayed state is the GPIO command. Measuring fan speed requires independent feedback.</p>
 
     <section class="card fan-config-card" aria-labelledby="fanConfigTitle">
       <div class="card-header">
-        <h2 id="fanConfigTitle">Ngưỡng điều khiển quạt</h2>
+        <h2 id="fanConfigTitle">Fan thresholds</h2>
       </div>
-      <p class="fan-config-help">AUTO và SHADOW điều khiển theo các ngưỡng đã lưu. Để AI điều khiển, chọn OR và đặt nhiệt độ bật/tắt 30/28°C, độ ẩm bật/tắt 75/70%. Với cấu hình khác, AI dùng luật dự phòng theo ngưỡng của bạn. <a href="#settings/tinyml" data-view="tinyml">Xem dự báo TinyML</a>.</p>
+      <p class="fan-config-help">AUTO and SHADOW use your saved thresholds. To enable model-based decisions in AI, select OR and set the temperature ON/OFF thresholds to 30/28°C and humidity ON/OFF thresholds to 75/70% RH. With other settings, AI uses your threshold rules. <a href="#settings/tinyml" data-view="tinyml">View the TinyML forecast</a>.</p>
       <form id="fanConfigForm">
         <fieldset id="fanConfigFields" disabled>
-          <legend class="sr-only">Ngưỡng điều khiển FAN</legend>
+          <legend class="sr-only">Fan thresholds</legend>
           <div class="fan-config-grid">
-            <label for="fanTemperatureOn">Nhiệt độ BẬT (&deg;C)
+            <label for="fanTemperatureOn">Temperature ON (&deg;C)
               <input id="fanTemperatureOn" type="number" min="-40" max="80" step="any" required inputmode="decimal" />
             </label>
-            <label for="fanTemperatureOff">Nhiệt độ TẮT (&deg;C)
+            <label for="fanTemperatureOff">Temperature OFF (&deg;C)
               <input id="fanTemperatureOff" type="number" min="-40" max="80" step="any" required inputmode="decimal" />
             </label>
-            <label for="fanHumidityOn">Độ ẩm không khí BẬT (%)
+            <label for="fanHumidityOn">Air humidity ON (%)
               <input id="fanHumidityOn" type="number" min="0" max="100" step="any" required inputmode="decimal" />
             </label>
-            <label for="fanHumidityOff">Độ ẩm không khí TẮT (%)
+            <label for="fanHumidityOff">Air humidity OFF (%)
               <input id="fanHumidityOff" type="number" min="0" max="100" step="any" required inputmode="decimal" />
             </label>
           </div>
-          <label class="fan-logic-label" for="fanActivationLogic">Điều kiện BẬT
+          <label class="fan-logic-label" for="fanActivationLogic">Switch ON when
             <select id="fanActivationLogic" aria-describedby="fanLogicDescription">
-              <option value="any">Nhiệt độ HOẶC độ ẩm (OR)</option>
-              <option value="all">Nhiệt độ VÀ độ ẩm (AND)</option>
+              <option value="any">Temperature OR humidity reaches its ON threshold</option>
+              <option value="all">Temperature AND humidity reach their ON thresholds</option>
             </select>
           </label>
-          <p id="fanLogicDescription" class="fan-config-help">BẬT khi nhiệt độ ≥ ngưỡng BẬT HOẶC độ ẩm ≥ ngưỡng BẬT. TẮT khi nhiệt độ ≤ ngưỡng TẮT VÀ độ ẩm ≤ ngưỡng TẮT. Giữ trạng thái hiện tại trong vùng còn lại.</p>
-          <button class="btn-toggle" id="fanConfigSaveBtn" type="submit">Lưu cấu hình FAN</button>
+          <p id="fanLogicDescription" class="fan-config-help">Switch ON when either reading reaches or exceeds its ON threshold. Switch OFF when both readings reach or fall below their OFF thresholds. Otherwise keep the current state.</p>
+          <button class="btn-toggle" id="fanConfigSaveBtn" type="submit">Save fan settings</button>
         </fieldset>
       </form>
-      <p id="fanConfigStatus" class="settings-msg" role="status" aria-live="polite">Đang tải cấu hình FAN...</p>
-      <p class="fan-config-help">AUTO giữ FAN OFF nếu chưa lưu cấu hình hợp lệ hoặc dữ liệu DHT20 bị lỗi/quá hạn. Cấu hình được lưu trên thiết bị và giữ lại sau khi khởi động lại.</p>
+      <p id="fanConfigStatus" class="settings-msg" role="status" aria-live="polite">Loading fan settings...</p>
+      <p class="fan-config-help">AUTO keeps the fan OFF until you save valid thresholds. Invalid or stale DHT20 readings also switch the fan OFF in AUTO. The device keeps its saved settings after a restart.</p>
     </section>
     </section>
     <section id="tinymlView" class="app-view" aria-labelledby="pageTitle" hidden>
     <section class="card ai-card" aria-labelledby="aiTitle">
       <div class="card-header">
-        <h2 id="aiTitle">TinyML (INT8) · Dự báo xu hướng điều khiển quạt</h2>
-        <span id="aiStatus" class="ai-status" role="status">Đang tải</span>
+        <h2 id="aiTitle">TinyML (INT8) · Fan control forecast</h2>
+        <span id="aiStatus" class="ai-status" role="status">Loading</span>
       </div>
       <div class="ai-grid">
-        <div><span class="ai-label">Dự báo sau 30 giây</span><strong id="aiProposal">—</strong></div>
-        <div><span class="ai-label">Luật ngưỡng tức thời (hồ sơ chuẩn)</span><strong id="aiTeacher">—</strong></div>
-        <div><span class="ai-label">Lệnh GPIO10 hiện tại</span><strong id="aiRelay">—</strong></div>
+        <div><span class="ai-label">30-second forecast</span><strong id="aiProposal">—</strong></div>
+        <div><span class="ai-label">Current threshold rule (reference settings)</span><strong id="aiTeacher">—</strong></div>
+        <div><span class="ai-label">Current GPIO10 command</span><strong id="aiRelay">—</strong></div>
       </div>
-      <p id="aiDecision" class="ai-detail">Chưa nhận quyết định điều khiển.</p>
+      <p id="aiDecision" class="ai-detail">Waiting for a control decision.</p>
       <p id="aiReadings" class="ai-detail">DHT20 · —</p>
-      <p id="aiTrend" class="ai-detail">Xu hướng cửa sổ trượt · —</p>
+      <p id="aiTrend" class="ai-detail">Rolling-window trend · —</p>
       <p id="aiProbabilities" class="ai-detail">Softmax INT8 OFF / HOLD / ON: —</p>
-      <p id="aiAgreement" class="ai-detail">Chưa có mẫu đối chiếu.</p>
-      <p id="aiSample" class="ai-detail">Chưa nhận kết quả suy luận.</p>
-      <p id="aiModel" class="ai-detail">Mô hình: —</p>
+      <p id="aiAgreement" class="ai-detail">Waiting for comparison samples.</p>
+      <p id="aiSample" class="ai-detail">Waiting for inference results.</p>
+      <p id="aiModel" class="ai-detail">Model · —</p>
       <details class="ai-explainer">
-        <summary>Cách đọc dự báo và quyết định của bộ giám sát</summary>
-        <p>Mỗi 5 giây, DHT20 cung cấp một mẫu. Từ 7 mẫu liên tiếp (khoảng 30 giây), firmware tính tốc độ thay đổi, tốc độ ở bước gần nhất và độ dao động quanh đường xu hướng. Mạng INT8 dùng các giá trị này cùng nhiệt độ, độ ẩm hiện tại và lệnh GPIO tại lúc lấy mẫu để đề xuất hành động cho 30 giây tới.</p>
-        <p>Luật tức thời dùng hồ sơ OR 30/28°C và 75/70% RH. HOLD giữ lệnh quạt trước đó. Trong SHADOW, so sánh đề xuất AI với GPIO do ngưỡng người dùng điều khiển. Tỷ lệ khớp đếm số lần mô hình đưa ra cùng hành động với luật tức thời.</p>
-        <p>Trong AI, đề xuất ON đủ điểm (≥ 0,80) có thể bật đón đầu ở dải trễ. Bộ giám sát giữ các ngưỡng bật/tắt, thời gian tối thiểu 10 giây và dùng luật dự phòng khi cửa sổ chưa đủ mẫu, mô hình lỗi, dữ liệu ngoài miền hoặc cấu hình khác hồ sơ. DHT20 lỗi hoặc quá hạn buộc GPIO về OFF ngay khi bộ điều khiển phát hiện.</p>
+        <summary>How to read the forecast and the controller’s decision</summary>
+        <p>The DHT20 takes a sample every 5 seconds. The firmware uses seven consecutive samples (about 30 seconds) to calculate trend slopes, the most recent rate of change, and variation around the trend. The INT8 model combines these features with the current temperature, humidity and GPIO command to propose an action 30 seconds ahead.</p>
+        <p>The reference rule uses OR logic with 30/28°C and 75/70% RH as its ON/OFF thresholds. HOLD keeps the previous command. In SHADOW, compare the model’s proposal with the GPIO command from your saved thresholds. The agreement figure counts how often the model and the current reference rule propose the same action.</p>
+        <p>In AI, an ON proposal with a score of at least 0.80 can start the fan early within the hysteresis band. The controller enforces the ON/OFF thresholds and 10-second minimum dwell time. It uses the threshold rules while collecting samples, after a model error, for readings outside the model’s range, or when the saved thresholds differ from the reference settings. An invalid or stale DHT20 reading switches GPIO10 OFF as soon as the controller detects it.</p>
       </details>
     </section>
 

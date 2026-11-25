@@ -59,20 +59,20 @@
         '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>' +
         '<polyline points="16 17 21 12 16 7"/>' +
         '<line x1="21" y1="12" x2="9" y2="12"/>' +
-      '</svg> Đăng xuất';
+      '</svg> Sign out';
     btnLogout.addEventListener('click', doLogout);
 
     bar.appendChild(rolePill);
     if (isAdmin()) {
       var btnCreateUser = document.createElement('button');
       btnCreateUser.className = 'btn-refresh';
-      btnCreateUser.textContent = '➕ Tạo User';
+      btnCreateUser.textContent = '➕ Create user';
       btnCreateUser.addEventListener('click', openCreateUserModal);
       bar.appendChild(btnCreateUser);
 
       var btnAssign = document.createElement('button');
       btnAssign.className = 'btn-refresh';
-      btnAssign.textContent = '👥 Phân quyền';
+      btnAssign.textContent = '👥 Assign access';
       btnAssign.addEventListener('click', openAssignModal);
       bar.appendChild(btnAssign);
     }
@@ -185,11 +185,11 @@
     var elapsed = Math.floor((Date.now() - start) / 1000);
     var remaining = COUNTDOWN_SECONDS - elapsed;
     if (remaining > 0) {
-      return { isOnline: true, text: remaining + "s", label: "Đếm ngược: " };
+      return { isOnline: true, text: remaining + "s", label: "Offline in: " };
     } else {
       var offlineElapsed = elapsed - COUNTDOWN_SECONDS;
       var roundedOfflineSeconds = Math.floor(offlineElapsed / 30) * 30;
-      return { isOnline: false, text: formatOfflineTime(roundedOfflineSeconds), label: "Đã Offline: " };
+      return { isOnline: false, text: formatOfflineTime(roundedOfflineSeconds), label: "Offline for: " };
     }
   }
 
@@ -227,12 +227,12 @@
     actionBar.innerHTML =
       '<div class="action-bar-left">' +
         '<button class="btn-action btn-select-all" id="btnSelectAll">' +
-          (isAllSelected ? "🗹 Bỏ chọn tất cả" : "☐ Chọn tất cả") +
+          (isAllSelected ? "🗹 Deselect all" : "☐ Select all") +
         '</button>' +
       '</div>' +
       '<div class="action-bar-right" style="display: ' + (selectedDeviceIds.length > 0 ? 'flex' : 'none') + ';">' +
-        '<span class="selected-count">Đã chọn <strong>' + selectedDeviceIds.length + '</strong> thiết bị</span>' +
-        '<button class="btn-action btn-delete-bulk" id="btnDeleteBulk">🗑️ Xóa đã chọn</button>' +
+        '<span class="selected-count">Selected devices: <strong>' + selectedDeviceIds.length + '</strong></span>' +
+        '<button class="btn-action btn-delete-bulk" id="btnDeleteBulk">🗑️ Delete selected</button>' +
       '</div>';
 
     document.getElementById("btnSelectAll").addEventListener("click", function () {
@@ -247,7 +247,7 @@
 
     if (selectedDeviceIds.length > 0) {
       document.getElementById("btnDeleteBulk").addEventListener("click", function () {
-        if (!confirm("Xóa toàn bộ dữ liệu của " + selectedDeviceIds.length + " thiết bị đã chọn?")) return;
+        if (!confirm("Delete all data for the " + selectedDeviceIds.length + " selected devices?")) return;
 
         var deletePromises = selectedDeviceIds.map(function (id) {
           var dev = currentDevices.find(function (d) { return getCardKey(d) === id; });
@@ -258,7 +258,7 @@
           }
           return fetch(url, { method: "DELETE" })
             .then(function (r) {
-              if (!r.ok) throw new Error("Thất bại tại ID: " + id);
+              if (!r.ok) throw new Error("Failed to delete device: " + id);
               return id;
             });
         });
@@ -275,7 +275,7 @@
             renderActionBar();
           })
           .catch(function (err) {
-            alert("Có lỗi xảy ra trong quá trình xóa: " + err.message);
+            alert("Deletion failed: " + err.message);
             fetchDevices();
           });
       });
@@ -298,10 +298,10 @@
   }
 
   function aiStatusLabel(status) {
-    return ({ ready: "Sẵn sàng", warming_up: "Đang nạp cửa sổ", loading: "Đang khởi tạo",
-      sensor_invalid: "Cảm biến lỗi", out_of_domain: "Ngoài miền mô hình",
-      inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
-      stale: "Kết quả quá hạn" })[status] || "Chưa có dữ liệu AI";
+    return ({ ready: "Ready", warming_up: "Collecting samples", loading: "Initializing",
+      sensor_invalid: "Sensor error", out_of_domain: "Outside model range",
+      inference_error: "Inference error", model_error: "Model error",
+      stale: "Stale result" })[status] || "No AI data yet";
   }
 
   function aiClass(value) {
@@ -338,7 +338,7 @@
     var teacher = ai && status !== "stale" ? aiClass(ai.rule_class) : "—";
     var agreement = ai && typeof ai.agreement_pct === "number" && Number.isFinite(ai.agreement_pct) &&
       ai.agreement_pct >= 0 && ai.agreement_pct <= 100 && Number.isInteger(ai.evaluated_samples) && ai.evaluated_samples > 0
-      ? ai.agreement_pct.toFixed(1) + "% / " + ai.evaluated_samples + " mẫu" : "—";
+      ? ai.agreement_pct.toFixed(1) + "% / " + ai.evaluated_samples + " samples" : "—";
     var probs = ready && Array.isArray(ai.probabilities) && ai.probabilities.length === 3 && ai.probabilities.every(function (p) {
       return typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     }) ? ai.probabilities.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") : "—";
@@ -346,27 +346,27 @@
       typeof ai.humi_slope_pct_min === "number" && Number.isFinite(ai.humi_slope_pct_min);
     var predictive = ai && Number.isInteger(ai.window_capacity);
     var winText = ai && Number.isInteger(ai.window_samples)
-      ? " (" + ai.window_samples + (predictive ? "/" + ai.window_capacity : "") + " mẫu)" : "";
+      ? " (" + ai.window_samples + (predictive ? "/" + ai.window_capacity : "") + " samples)" : "";
     var trendText = hasSlopes
-      ? ((ai.temp_slope_c_min >= 0 ? "+" : "") + ai.temp_slope_c_min.toFixed(2) + "°C/p · " +
-         (ai.humi_slope_pct_min >= 0 ? "+" : "") + ai.humi_slope_pct_min.toFixed(2) + "%RH/phút" + winText +
-         (typeof ai.residual_jitter === "number" ? " · độ dao động chuẩn hóa " + ai.residual_jitter.toFixed(3) : "") +
-         (typeof ai.fan_on_at_sample === "boolean" ? " · GPIO lúc lấy mẫu " + (ai.fan_on_at_sample ? "ON" : "OFF") : ""))
-      : (status === "warming_up" && winText ? "Đang nạp" + winText : "—");
+      ? ((ai.temp_slope_c_min >= 0 ? "+" : "") + ai.temp_slope_c_min.toFixed(2) + "°C/min · " +
+         (ai.humi_slope_pct_min >= 0 ? "+" : "") + ai.humi_slope_pct_min.toFixed(2) + "%RH/min" + winText +
+         (typeof ai.residual_jitter === "number" ? " · normalized jitter " + ai.residual_jitter.toFixed(3) : "") +
+         (typeof ai.fan_on_at_sample === "boolean" ? " · GPIO at sampling " + (ai.fan_on_at_sample ? "ON" : "OFF") : ""))
+      : (status === "warming_up" && winText ? "Collecting samples" + winText : "—");
     var mode = ["AUTO", "SHADOW", "AI", "MANUAL"].indexOf(device.MODE_state) >= 0 ? device.MODE_state : "—";
     var fan = device.FAN_state === "ON" || device.FAN_state === "OFF" ? device.FAN_state : "—";
     return '<div class="device-ai">' +
       '<div class="device-ai-heading"><strong>' + (predictive ? 'TinyML INT8' : 'TinyML') + '</strong><span class="js-ai-status">' + escapeHtml(aiStatusLabel(status)) + '</span></div>' +
-      '<p>AI · <strong class="js-ai-proposal">' + proposal + '</strong> · ' + (predictive ? 'Luật ngưỡng tức thời (hồ sơ chuẩn)' : 'Luật tham chiếu') + ' · <span class="js-ai-teacher">' + teacher + '</span></p>' +
-      '<p>Xu hướng: <span class="js-ai-trend">' + escapeHtml(trendText) + '</span></p>' +
-      '<p>Mức khớp tham chiếu: ' + escapeHtml(agreement) + '</p>' +
+      '<p>AI · <strong class="js-ai-proposal">' + proposal + '</strong> · ' + (predictive ? 'Instantaneous rule (reference profile)' : 'Reference rule') + ' · <span class="js-ai-teacher">' + teacher + '</span></p>' +
+      '<p>Trend: <span class="js-ai-trend">' + escapeHtml(trendText) + '</span></p>' +
+      '<p>Agreement with the reference rule: ' + escapeHtml(agreement) + '</p>' +
       '<p class="ai-probabilities">Softmax OFF / HOLD / ON: <span class="js-ai-probabilities">' + escapeHtml(probs) + '</span></p>' +
-      '<p>Mô hình: ' + escapeHtml(ai && ai.model_version || '—') + '</p>' +
-      '<p>Quạt / chế độ <span class="js-fan-freshness">' + (fresh ? '(lần nhận mới nhất)' : '(dữ liệu cũ)') + '</span>: <strong>' + escapeHtml(fan) + ' / ' + escapeHtml(mode) + '</strong></p>' +
-      '<p>Lý do: ' + escapeHtml(device.fan_reason || '—') + '</p>' +
-      '<p class="lab-sample">Phiên ' + escapeHtml(device.boot_id || '—') + ' · mẫu DHT20 ' + escapeHtml(device.sample_seq == null ? '—' : device.sample_seq) +
-      ' · mẫu điều khiển ' + escapeHtml(device.fan_decision_sample_seq == null ? '—' : device.fan_decision_sample_seq) + '</p>' +
-      (!ai && device.Score != null ? '<p class="lab-legacy">Bản ghi cũ: Score thuộc mô hình rủi ro trước đây, không được dùng làm mức khớp điều khiển quạt.</p>' : '') +
+      '<p>Model: ' + escapeHtml(ai && ai.model_version || '—') + '</p>' +
+      '<p>Fan / mode <span class="js-fan-freshness">' + (fresh ? '(latest report)' : '(stale data)') + '</span>: <strong>' + escapeHtml(fan) + ' / ' + escapeHtml(mode) + '</strong></p>' +
+      '<p>Reason: ' + escapeHtml(device.fan_reason || '—') + '</p>' +
+      '<p class="lab-sample">Boot ' + escapeHtml(device.boot_id || '—') + ' · DHT20 sample ' + escapeHtml(device.sample_seq == null ? '—' : device.sample_seq) +
+      ' · Control sample ' + escapeHtml(device.fan_decision_sample_seq == null ? '—' : device.fan_decision_sample_seq) + '</p>' +
+      (!ai && device.Score != null ? '<p class="lab-legacy">Legacy record: Score belongs to the earlier risk model and does not measure fan control agreement.</p>' : '') +
       '</div>';
   }
 
@@ -375,8 +375,8 @@
       var active = activeExports[card.getAttribute("data-card-key")];
       var button = card.querySelector(".js-lab-export");
       var status = card.querySelector(".js-export-status");
-      if (button) button.textContent = active ? "Hủy xuất" : "Xuất dữ liệu JSONL";
-      if (status) status.textContent = active ? "Đã đọc " + active.count + " mẫu…" : "";
+      if (button) button.textContent = active ? "Cancel export" : "Export JSONL";
+      if (status) status.textContent = active ? "Read " + active.count + " samples…" : "";
     });
   }
 
@@ -391,7 +391,7 @@
     var from = document.getElementById("exportFrom").value;
     var to = document.getElementById("exportTo").value;
     if (from && to && new Date(from).getTime() >= new Date(to).getTime()) {
-      alert("Mốc bắt đầu phải trước mốc kết thúc.");
+      alert("The start time must be earlier than the end time.");
       return;
     }
     if (from) query.set("from", new Date(from).toISOString());
@@ -407,22 +407,22 @@
         query.set("after_id", String(after));
         if (until !== null) query.set("until_id", String(until));
         var response = await fetch("/admin/api/history?" + query.toString(), { signal: job.controller.signal, cache: "no-store" });
-        if (!response.ok) throw new Error("Không tải được lịch sử (HTTP " + response.status + ").");
+        if (!response.ok) throw new Error("Unable to load history (HTTP " + response.status + ").");
         var page = await response.json();
         if (!page || !Array.isArray(page.rows) || !Number.isInteger(page.until_id) ||
-          (until !== null && page.until_id !== until)) throw new Error("Phản hồi lịch sử không hợp lệ.");
+          (until !== null && page.until_id !== until)) throw new Error("Invalid history response.");
         until = page.until_id;
         chunks.push(page.rows.map(function (row) { return JSON.stringify(row) + "\n"; }).join(""));
         job.count += page.rows.length;
         syncExportButtons();
         if (page.next_after_id === null) break;
         if (!Number.isInteger(page.next_after_id) || page.next_after_id <= after || page.next_after_id > until) {
-          throw new Error("Con trỏ phân trang lịch sử không hợp lệ.");
+          throw new Error("Invalid history cursor.");
         }
         after = page.next_after_id;
       } while (!job.controller.signal.aborted);
       if (job.controller.signal.aborted) return;
-      if (!job.count) { alert("Không có mẫu trong khoảng thời gian đã chọn."); return; }
+      if (!job.count) { alert("No samples in the selected time range."); return; }
       var blobUrl = URL.createObjectURL(new Blob(chunks, { type: "application/x-ndjson;charset=utf-8" }));
       var link = document.createElement("a");
       link.href = blobUrl;
@@ -432,7 +432,7 @@
       link.remove();
       setTimeout(function () { URL.revokeObjectURL(blobUrl); }, 10000);
     } catch (error) {
-      if (error.name !== "AbortError") alert(error.message || "Không xuất được dữ liệu.");
+      if (error.name !== "AbortError") alert(error.message || "Unable to export data.");
     } finally {
       delete activeExports[key];
       syncExportButtons();
@@ -460,8 +460,7 @@
     card.setAttribute("role", "button");
     card.setAttribute("tabindex", "0");
     card.setAttribute("data-card-key", cardKey);
-    card.setAttribute("data-device-id", device.device_id);
-    card.title = isAdmin() ? ("Chọn/Bỏ chọn " + (device.lan_ip ? (device.device_id + " (" + device.lan_ip + ")") : device.device_id)) : device.device_id;
+    card.title = isAdmin() ? ("Select or deselect " + (device.lan_ip ? (device.device_id + " (" + device.lan_ip + ")") : device.device_id)) : device.device_id;
 
     var checkboxHtml = isAdmin()
       ? '<div class="select-checkbox-indicator">' + (isSelected ? '✓' : '') + '</div>'
@@ -472,7 +471,7 @@
       '<div class="device-card-header">' +
         '<div>' +
           '<div class="device-name">' + escapeHtml(displayName(device.device_id)) + '</div>' +
-          (device.lan_ip ? '<div class="device-ip" style="font-size:11px;color:var(--muted);">' + escapeHtml(device.lan_ip) + '</div>' : '') +
+          (device.lan_ip ? '<div style="font-size:11px;color:var(--muted);">' + escapeHtml(device.lan_ip) + '</div>' : '') +
         '</div>' +
         '<span class="status-pill ' + cardStatusClass + ' js-status-pill">' +
           '<span class="status-dot"></span><span class="js-status-label">' + cardStatusLabel + '</span>' +
@@ -480,20 +479,20 @@
       '</div>' +
       '<div class="sensor-row">' +
         '<div class="sensor-item">' +
-          '<span class="sensor-label">Nhiệt độ</span>' +
-          '<span class="sensor-value js-val-temp ' + tempColorClass(device.temperature) + '">' + escapeHtml(fmtTemp(device.temperature)) + '</span>' +
+          '<span class="sensor-label">Temperature</span>' +
+          '<span class="sensor-value ' + tempColorClass(device.temperature) + '">' + escapeHtml(fmtTemp(device.temperature)) + '</span>' +
         '</div>' +
         '<div class="sensor-item">' +
-          '<span class="sensor-label">Độ ẩm KK</span>' +
-          '<span class="sensor-value js-val-humi ' + humiColorClass(device.humidity) + '">' + escapeHtml(fmtHumi(device.humidity)) + '</span>' +
+          '<span class="sensor-label">Air humidity</span>' +
+          '<span class="sensor-value ' + humiColorClass(device.humidity) + '">' + escapeHtml(fmtHumi(device.humidity)) + '</span>' +
         '</div>' +
         '<div class="sensor-item">' +
-          '<span class="sensor-label">Độ ẩm đất</span>' +
-          '<span class="sensor-value js-val-soil val-soil">' + escapeHtml(fmtSoil(device.soil_moisture)) + '</span>' +
+          '<span class="sensor-label">Soil moisture</span>' +
+          '<span class="sensor-value val-soil">' + escapeHtml(fmtSoil(device.soil_moisture)) + '</span>' +
         '</div>' +
       '</div>' +
       renderAILab(device) +
-      '<button type="button" class="btn-action js-lab-export">Xuất dữ liệu JSONL</button>' +
+      '<button type="button" class="btn-action js-lab-export">Export JSONL</button>' +
       '<p class="export-status js-export-status" role="status"></p>' +
       '<div class="card-footer">' +
         '<span class="last-seen js-last-seen" style="display: ' + displayStyle + ';">' +
@@ -501,7 +500,7 @@
           '<span class="js-countdown">' + countdownDisplay + '</span>' +
         '</span>' +
       '</div>' +
-      '<div class="card-arrow" title="Xem chi tiết thiết bị này">' +
+      '<div class="card-arrow" title="View device details">' +
         '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" ' +
              'stroke-linecap="round" stroke-linejoin="round">' +
           '<path d="M5 12h14M13 6l6 6-6 6"/>' +
@@ -531,7 +530,7 @@
       arrowBtn.addEventListener("click", function (e) {
         e.stopPropagation();
         if (!url) {
-          alert("Chưa có IP LAN của thiết bị. Mở dashboard ESP32 trực tiếp trên mạng local (HTTP).");
+          alert("No LAN IP address is available for this device. Open the ESP32 dashboard on its local network using HTTP.");
           return;
         }
         openDeviceLoginModal(device.device_id, url, device.lan_ip);
@@ -560,7 +559,7 @@
             '<rect x="2" y="3" width="20" height="14" rx="2"/>' +
             '<path d="M8 21h8M12 17v4"/>' +
           '</svg>' +
-          '<span>Chưa có thiết bị nào gửi dữ liệu.</span>' +
+          '<span>No devices have sent data yet.</span>' +
         '</div>';
       return;
     }
@@ -610,12 +609,12 @@
         pillEl.className = "status-pill " + (cardOnline ? "online" : "offline") + " js-status-pill";
         labelEl.textContent = cardOnline ? "Online" : "Offline";
         if (device && (!aiSnapshotFresh(device) || (device.ai && device.ai.status === "ready" && !aiMatchesSample(device)))) {
-          card.querySelector(".js-ai-status").textContent = "Kết quả quá hạn";
+          card.querySelector(".js-ai-status").textContent = "Stale result";
           card.querySelector(".js-ai-proposal").textContent = "—";
           card.querySelector(".js-ai-teacher").textContent = "—";
           if (card.querySelector(".js-ai-trend")) card.querySelector(".js-ai-trend").textContent = "—";
           card.querySelector(".js-ai-probabilities").textContent = "—";
-          card.querySelector(".js-fan-freshness").textContent = "(dữ liệu cũ)";
+          card.querySelector(".js-fan-freshness").textContent = "(stale data)";
         }
       }
     });
@@ -629,11 +628,11 @@
     if (latestTimestampUp) {
       var d = new Date(latestTimestampUp);
       el.textContent =
-        "Cập nhật lúc " +
+        "Last updated " +
         pad(d.getDate()) + "/" + pad(d.getMonth() + 1) + "/" + d.getFullYear() +
         " " + pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds());
     } else {
-      el.textContent = "Chưa có dữ liệu";
+      el.textContent = "No data yet";
     }
   }
 
@@ -678,9 +677,9 @@
               '<circle cx="12" cy="12" r="10"/>' +
               '<line x1="4.93" y1="4.93" x2="19.07" y2="19.07"/>' +
             '</svg>' +
-            '<span>Lỗi kết nối: ' + escapeHtml(err.message) + '</span>' +
+            '<span>Connection error: ' + escapeHtml(err.message) + '</span>' +
           '</div>';
-        document.getElementById("lastRefresh").textContent = "Lỗi kết nối";
+        document.getElementById("lastRefresh").textContent = "Connection error";
       });
   }
 
@@ -747,12 +746,12 @@
     adminTargetId    = deviceId;
     adminTargetUrl   = url;
 
-    adminModalDeviceIdEl.textContent    = "Thiết bị: " + deviceId;
+    adminModalDeviceIdEl.textContent    = "Device: " + deviceId;
     adminNewPasswordInput.value         = "";
     adminPwdMsg.textContent             = "";
     adminPwdMsg.className               = "login-msg";
     adminDeletePwdSection.style.display = "none";
-    adminPwdSectionTitle.textContent    = "Đặt mật khẩu thiết bị";
+    adminPwdSectionTitle.textContent    = "Set device password";
 
     adminModal.style.display = "flex";
 
@@ -760,10 +759,10 @@
       .then(function (r) { return r.json(); })
       .then(function (data) {
         if (data.hasPassword) {
-          adminPwdSectionTitle.textContent    = "Đổi mật khẩu thiết bị";
+          adminPwdSectionTitle.textContent    = "Change device password";
           adminDeletePwdSection.style.display = "";
         } else {
-          adminPwdSectionTitle.textContent    = "Đặt mật khẩu thiết bị";
+          adminPwdSectionTitle.textContent    = "Set device password";
           adminDeletePwdSection.style.display = "none";
         }
       })
@@ -794,13 +793,13 @@
   adminSavePasswordBtn.addEventListener("click", function () {
     var pass = adminNewPasswordInput.value.trim();
     if (!pass) {
-      adminPwdMsg.textContent = "Vui lòng nhập mật khẩu.";
+      adminPwdMsg.textContent = "Enter a password.";
       adminPwdMsg.className   = "login-msg error";
       return;
     }
 
     adminSavePasswordBtn.disabled = true;
-    adminPwdMsg.textContent       = "Đang lưu...";
+    adminPwdMsg.textContent       = "Saving...";
     adminPwdMsg.className         = "login-msg";
 
     fetch("/admin/api/devices/" + encodeURIComponent(adminTargetId) + "/password", {
@@ -811,28 +810,28 @@
       .then(function (r) {
         adminSavePasswordBtn.disabled = false;
         if (r.ok) {
-          adminPwdMsg.textContent             = "✓ Đã lưu mật khẩu thành công.";
+          adminPwdMsg.textContent             = "✓ Password saved.";
           adminPwdMsg.className               = "login-msg success";
           adminNewPasswordInput.value         = "";
-          adminPwdSectionTitle.textContent    = "Đổi mật khẩu thiết bị";
+          adminPwdSectionTitle.textContent    = "Change device password";
           adminDeletePwdSection.style.display = "";
         } else {
-          adminPwdMsg.textContent = "Lưu thất bại, vui lòng thử lại.";
+          adminPwdMsg.textContent = "Unable to save. Try again.";
           adminPwdMsg.className   = "login-msg error";
         }
       })
       .catch(function () {
         adminSavePasswordBtn.disabled = false;
-        adminPwdMsg.textContent       = "Lỗi kết nối, thử lại.";
+        adminPwdMsg.textContent       = "Connection failed. Try again.";
         adminPwdMsg.className         = "login-msg error";
       });
   });
 
   adminDeletePasswordBtn.addEventListener("click", function () {
-    if (!confirm("Xóa mật khẩu của thiết bị \"" + adminTargetId + "\"?\nSau khi xóa, User cần Admin phê duyệt khi truy cập.")) return;
+    if (!confirm("Delete the password for device \"" + adminTargetId + "\"?\nUsers will need administrator approval to open this device.")) return;
 
     adminDeletePasswordBtn.disabled = true;
-    adminPwdMsg.textContent         = "Đang xóa...";
+    adminPwdMsg.textContent         = "Deleting...";
     adminPwdMsg.className           = "login-msg";
 
     fetch("/admin/api/devices/" + encodeURIComponent(adminTargetId) + "/password", {
@@ -841,19 +840,19 @@
       .then(function (r) {
         adminDeletePasswordBtn.disabled = false;
         if (r.ok) {
-          adminPwdMsg.textContent             = "✓ Đã xóa mật khẩu.";
+          adminPwdMsg.textContent             = "✓ Password deleted.";
           adminPwdMsg.className               = "login-msg success";
-          adminPwdSectionTitle.textContent    = "Đặt mật khẩu thiết bị";
+          adminPwdSectionTitle.textContent    = "Set device password";
           adminDeletePwdSection.style.display = "none";
           adminNewPasswordInput.value         = "";
         } else {
-          adminPwdMsg.textContent = "Xóa thất bại, vui lòng thử lại.";
+          adminPwdMsg.textContent = "Unable to delete. Try again.";
           adminPwdMsg.className   = "login-msg error";
         }
       })
       .catch(function () {
         adminDeletePasswordBtn.disabled = false;
-        adminPwdMsg.textContent         = "Lỗi kết nối, thử lại.";
+        adminPwdMsg.textContent         = "Connection failed. Try again.";
         adminPwdMsg.className           = "login-msg error";
       });
   });
@@ -864,7 +863,7 @@
     loginTargetId    = deviceId;
     loginTargetUrl   = url;
 
-    loginDeviceIdEl.textContent = "Thiết bị: " + deviceId;
+    loginDeviceIdEl.textContent = "Device: " + deviceId;
     loginPasswordInput.value    = "";
     loginMsg.textContent        = "";
     loginMsg.className          = "login-msg";
@@ -896,7 +895,7 @@
     var pass = loginPasswordInput.value.trim();
 
     loginSubmitBtn.disabled = true;
-    loginMsg.textContent    = "Đang xác thực...";
+    loginMsg.textContent    = "Verifying password...";
     loginMsg.className      = "login-msg";
 
     fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/ticket", {
@@ -914,21 +913,21 @@
         }
 
         if (data.ok && data.ticket) {
-          loginMsg.textContent = "Thành công! Đang chuyển hướng...";
+          loginMsg.textContent = "Access granted. Redirecting...";
           loginMsg.className   = "login-msg success";
           var targetUrl = data.lanIp
             ? "http://" + data.lanIp + "/?ticket=" + encodeURIComponent(data.ticket)
             : loginTargetUrl + "?ticket=" + encodeURIComponent(data.ticket);
           setTimeout(function () { window.location.href = targetUrl; }, 500);
         } else {
-          loginMsg.textContent = pass ? "Mật khẩu không đúng." : "Vui lòng nhập mật khẩu.";
+          loginMsg.textContent = pass ? "Incorrect password." : "Enter a password.";
           loginMsg.className   = "login-msg error";
           loginPasswordInput.select();
         }
       })
       .catch(function () {
         loginSubmitBtn.disabled = false;
-        loginMsg.textContent    = "Lỗi kết nối, thử lại.";
+        loginMsg.textContent    = "Connection failed. Try again.";
         loginMsg.className      = "login-msg error";
       });
   });
@@ -942,7 +941,7 @@
 
   function startAccessRequest() {
     loginSubmitBtn.disabled = true;
-    loginMsg.textContent    = "Thiết bị chưa có mật khẩu. Đang gửi yêu cầu đến Admin...";
+    loginMsg.textContent    = "This device has no password. Requesting administrator approval...";
     loginMsg.className      = "login-msg";
 
     fetch("/admin/api/devices/" + encodeURIComponent(loginTargetId) + "/access-request", {
@@ -954,11 +953,11 @@
       .then(function (res) {
         if (!res.ok) {
           loginSubmitBtn.disabled = false;
-          loginMsg.textContent    = res.data.error || "Gửi yêu cầu thất bại.";
+          loginMsg.textContent    = res.data.error || "Unable to send the request.";
           loginMsg.className      = "login-msg error";
           return;
         }
-        loginMsg.textContent = "Đã gửi yêu cầu. Đang chờ Admin chấp nhận...";
+        loginMsg.textContent = "Request sent. Waiting for approval...";
         var reqId = res.data.id;
         stopAccessPoll();
         accessPollTimer = setInterval(function () {
@@ -969,19 +968,19 @@
               stopAccessPoll();
               loginSubmitBtn.disabled = false;
               if (s.status === "approved") {
-                loginMsg.textContent = "Admin đã chấp nhận! Đang chuyển hướng...";
+                loginMsg.textContent = "Request approved. Redirecting...";
                 loginMsg.className   = "login-msg success";
                 if (!s.ticket || !s.lanIp) {
-                  loginMsg.textContent = "Không nhận được quyền truy cập thiết bị. Vui lòng thử lại.";
+                  loginMsg.textContent = "Unable to access the device. Try again.";
                   return;
                 }
                 var approvedUrl = "http://" + s.lanIp + "/?ticket=" + encodeURIComponent(s.ticket);
                 setTimeout(function () { window.location.href = approvedUrl; }, 500);
               } else if (s.status === "denied") {
-                loginMsg.textContent = "Admin đã từ chối yêu cầu truy cập.";
+                loginMsg.textContent = "The administrator denied your request.";
                 loginMsg.className   = "login-msg error";
               } else {
-                loginMsg.textContent = "Yêu cầu đã hết hạn. Vui lòng thử lại.";
+                loginMsg.textContent = "The request expired. Try again.";
                 loginMsg.className   = "login-msg error";
               }
             })
@@ -990,7 +989,7 @@
       })
       .catch(function () {
         loginSubmitBtn.disabled = false;
-        loginMsg.textContent    = "Lỗi kết nối, thử lại.";
+        loginMsg.textContent    = "Connection failed. Try again.";
         loginMsg.className      = "login-msg error";
       });
   }
@@ -1010,10 +1009,10 @@
       row.className = "action-bar";
       row.innerHTML =
         '<span class="selected-count">🔔 <strong>' + escapeHtml(r.username) +
-        '</strong> xin truy cập thiết bị <strong>' + escapeHtml(r.deviceId) + '</strong></span>' +
+        '</strong> requests access to device <strong>' + escapeHtml(r.deviceId) + '</strong></span>' +
         '<div class="action-bar-right">' +
-          '<button class="btn-action" data-act="approve">✓ Chấp nhận</button>' +
-          '<button class="btn-action btn-delete-bulk" data-act="deny">✕ Từ chối</button>' +
+          '<button class="btn-action" data-act="approve">✓ Approve</button>' +
+          '<button class="btn-action btn-delete-bulk" data-act="deny">✕ Deny</button>' +
         '</div>';
       row.querySelector('[data-act="approve"]').addEventListener("click", function () {
         decideAccessRequest(r.id, true);
@@ -1069,7 +1068,7 @@
         var normal = users.filter(function (u) { return u.role === "user"; });
         if (normal.length === 0) {
           assignSaveBtn.disabled = true;
-          assignDeviceList.innerHTML = '<div class="assign-empty">Chưa có tài khoản User nào.</div>';
+          assignDeviceList.innerHTML = '<div class="assign-empty">No user accounts yet.</div>';
           return;
         }
         assignSaveBtn.disabled = false;
@@ -1081,7 +1080,7 @@
         });
         loadAssignedDevices();
       })
-      .catch(function () { setAssignMsg("Không tải được danh sách tài khoản.", "error"); });
+      .catch(function () { setAssignMsg("Unable to load the account list.", "error"); });
   }
 
   function loadAssignedDevices() {
@@ -1110,7 +1109,7 @@
         assignDeviceList.innerHTML = "";
         var macs = Object.keys(map);
         if (macs.length === 0) {
-          assignDeviceList.innerHTML = '<div class="assign-empty">Chưa có thiết bị nào.</div>';
+          assignDeviceList.innerHTML = '<div class="assign-empty">No devices yet.</div>';
           return;
         }
 
@@ -1141,7 +1140,7 @@
           }
 
           if (map[mac].length === 0) {
-            ipBox.innerHTML = '<div class="assign-empty">Chưa có LAN IP.</div>';
+            ipBox.innerHTML = '<div class="assign-empty">No LAN IP address yet.</div>';
           }
           map[mac].forEach(function (ip) {
             var row = document.createElement("label");
@@ -1171,7 +1170,7 @@
           assignDeviceList.appendChild(group);
         });
       })
-      .catch(function () { setAssignMsg("Không tải được danh sách thiết bị.", "error"); });
+      .catch(function () { setAssignMsg("Unable to load the device list.", "error"); });
   }
 
   assignUserSelect.addEventListener("change", loadAssignedDevices);
@@ -1188,7 +1187,7 @@
       if (cb.checked) devices.push({ device_id: cb.getAttribute("data-device-id"), lan_ip: cb.value });
     });
     assignSaveBtn.disabled = true;
-    setAssignMsg("Đang lưu...", "");
+    setAssignMsg("Saving...", "");
     fetch("/admin/api/users/" + encodeURIComponent(uid) + "/devices", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1196,12 +1195,12 @@
     })
       .then(function (r) {
         assignSaveBtn.disabled = false;
-        if (r.ok) setAssignMsg("✓ Đã lưu phân quyền.", "success");
-        else setAssignMsg("Lưu thất bại, vui lòng thử lại.", "error");
+        if (r.ok) setAssignMsg("✓ Device assignments saved.", "success");
+        else setAssignMsg("Unable to save. Try again.", "error");
       })
       .catch(function () {
         assignSaveBtn.disabled = false;
-        setAssignMsg("Lỗi kết nối, thử lại.", "error");
+        setAssignMsg("Connection failed. Try again.", "error");
       });
   });
 
@@ -1244,16 +1243,16 @@
     var username = createUserNameInput.value.trim();
     var password = createUserPassInput.value;
     if (!username || !password) {
-      setCreateUserMsg("Vui lòng nhập tên đăng nhập và mật khẩu.", "error");
+      setCreateUserMsg("Enter your username and password.", "error");
       return;
     }
     if (password.length < 6) {
-      setCreateUserMsg("Mật khẩu phải có ít nhất 6 ký tự.", "error");
+      setCreateUserMsg("The password must contain at least 6 characters.", "error");
       return;
     }
 
     createUserSubmitBtn.disabled = true;
-    setCreateUserMsg("Đang tạo...", "");
+    setCreateUserMsg("Creating account...", "");
 
     fetch("/admin/api/users", {
       method: "POST",
@@ -1263,21 +1262,21 @@
       .then(function (r) {
         createUserSubmitBtn.disabled = false;
         if (r.ok) {
-          setCreateUserMsg("✓ Đã tạo tài khoản \"" + username + "\".", "success");
+          setCreateUserMsg("✓ Created account \"" + username + "\".", "success");
           createUserNameInput.value = "";
           createUserPassInput.value = "";
           createUserNameInput.focus();
           return;
         }
         return r.json().then(function (data) {
-          setCreateUserMsg(data.error || "Tạo tài khoản thất bại.", "error");
+          setCreateUserMsg(data.error || "Unable to create account.", "error");
         }).catch(function () {
-          setCreateUserMsg("Tạo tài khoản thất bại.", "error");
+          setCreateUserMsg("Unable to create account.", "error");
         });
       })
       .catch(function () {
         createUserSubmitBtn.disabled = false;
-        setCreateUserMsg("Lỗi kết nối, thử lại.", "error");
+        setCreateUserMsg("Connection failed. Try again.", "error");
       });
   });
 

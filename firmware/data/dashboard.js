@@ -82,10 +82,13 @@
   }
 
   // ---------- Clock (client-side, always available even without NTP) ----------
-  function tickClock() {
+  function nowLabel() {
     var now = new Date();
     var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
-    els.time.textContent = pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+    return pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
+  }
+  function tickClock() {
+    els.time.textContent = nowLabel();
   }
   tickClock();
   setInterval(tickClock, 1000);
@@ -129,15 +132,9 @@
     tag.appendChild(select);
   }
 
-  function nowLabel() {
-    var now = new Date();
-    var pad = function (n) { return n < 10 ? "0" + n : "" + n; };
-    return pad(now.getHours()) + ":" + pad(now.getMinutes()) + ":" + pad(now.getSeconds());
-  }
-
   function initChart() {
     if (typeof Chart === "undefined") {
-      console.warn("Không tải được Chart.js (Chế độ offline) -> dùng canvas thuần");
+      console.warn("Chart.js is unavailable. Drawing the chart directly on the canvas.");
       initFallbackChart();
       return;
     }
@@ -337,7 +334,7 @@
   var mapInstance = null;
   function initMap() {
     if (typeof L === "undefined") {
-      console.warn("Không tải được Leaflet (Chế độ offline)");
+      console.warn("Leaflet is unavailable. The map could not load.");
       return;
     }
 
@@ -372,35 +369,35 @@
   function syncControls() {
     var fresh = state.lastFanAt && Date.now() - state.lastFanAt < STALE_MS;
     els.fanToggleBtn.disabled = state.controlPending || !fresh || state.fanMode !== "MANUAL";
-    els.fanToggleBtn.title = state.fanMode === "MANUAL" ? "Đổi lệnh quạt ON/OFF" : "Chọn và áp dụng MANUAL trước";
+    els.fanToggleBtn.title = state.fanMode === "MANUAL" ? "Toggle the fan command" : "Select and apply MANUAL first";
     els.modeApplyBtn.disabled = state.controlPending || !fresh;
     els.modeSelect.disabled = state.controlPending;
   }
 
   function reasonLabel(reason) {
     var labels = {
-      control_unavailable: "Chưa có trạng thái điều khiển",
-      manual_on: "Lệnh bật thủ công", manual_off: "Lệnh tắt thủ công", manual_timeout: "Hết thời hạn bật thủ công",
-      config_required: "Cần lưu cấu hình ngưỡng", sensor_invalid: "Dữ liệu cảm biến lỗi hoặc quá hạn",
-      mode_changed: "Đã đổi chế độ/ngưỡng; tắt quạt và chờ chu kỳ điều khiển",
-      ai_proactive_on: "AI bật đón đầu xu hướng tăng nhanh trước khi chạm ngưỡng tĩnh",
-      ai_on: "AI đề xuất bật",
-      ai_off: "AI đề xuất tắt",
-      ai_hold: "AI đề xuất giữ trạng thái",
-      ai_guard_threshold_on: "Bộ giám sát yêu cầu bật theo ngưỡng trên",
-      ai_guard_threshold_off: "Bộ giám sát yêu cầu tắt theo ngưỡng dưới",
-      ai_guard_hysteresis: "Bộ giám sát giữ quạt đang bật trong dải trễ",
-      rule_on: "Luật ngưỡng yêu cầu bật", rule_off: "Luật ngưỡng yêu cầu tắt",
-      min_on_time: "Giữ ON đủ thời gian tối thiểu (10s)", min_off_time: "Giữ OFF đủ thời gian tối thiểu (10s)",
-      ai_fallback_warming_up: "Dùng luật dự phòng trong lúc chờ đủ cửa sổ trượt",
-      ai_fallback_low_score: "Dùng luật dự phòng: softmax INT8 chưa đạt 0,80",
-      ai_fallback_profile_mismatch: "Dùng luật dự phòng: cấu hình chưa tương thích mô hình"
+      control_unavailable: "Controller status unavailable",
+      manual_on: "Manual ON command", manual_off: "Manual OFF command", manual_timeout: "Manual ON time limit reached",
+      config_required: "Save the fan thresholds first", sensor_invalid: "Invalid or stale sensor readings",
+      mode_changed: "Mode or thresholds changed. Fan off until the next control cycle.",
+      ai_proactive_on: "AI started the fan before the ON threshold in response to a rising trend",
+      ai_on: "AI proposes ON",
+      ai_off: "AI proposes OFF",
+      ai_hold: "AI proposes HOLD",
+      ai_guard_threshold_on: "Controller requires ON at the upper threshold",
+      ai_guard_threshold_off: "Controller requires OFF at the lower threshold",
+      ai_guard_hysteresis: "Controller keeps the fan ON within the hysteresis band",
+      rule_on: "Threshold rule calls for ON", rule_off: "Threshold rule calls for OFF",
+      min_on_time: "Holding ON for the 10-second minimum", min_off_time: "Holding OFF for the 10-second minimum",
+      ai_fallback_warming_up: "Using threshold rules until the sample window fills",
+      ai_fallback_low_score: "Using threshold rules because the INT8 score is below 0.80",
+      ai_fallback_profile_mismatch: "Using threshold rules because the settings differ from the model profile"
     };
     if (labels[reason]) return labels[reason];
     if (typeof reason === "string" && reason.indexOf("ai_fallback_") === 0) {
-      return "Dùng luật dự phòng: " + aiStatusLabel(reason.slice(12));
+      return "Using threshold rules · " + aiStatusLabel(reason.slice(12));
     }
-    return typeof reason === "string" ? reason : "Chưa có lý do điều khiển";
+    return typeof reason === "string" ? reason : "Waiting for the controller’s reason";
   }
 
   function applyFanSnapshot(data) {
@@ -420,19 +417,19 @@
     document.getElementById("aiRelay").textContent = fresh ? state.fanState + " · " + state.fanMode : "—";
     document.getElementById("aiDecision").textContent = fresh
       ? reasonLabel(state.fanReason) + (state.fanReason ? " · " + state.fanReason : "") +
-        (state.fanDecisionSeq !== null ? " · mẫu điều khiển " + state.fanDecisionSeq : "")
-      : "Chưa nhận quyết định điều khiển còn hiệu lực.";
+        (state.fanDecisionSeq !== null ? " · control sample " + state.fanDecisionSeq : "")
+      : "Waiting for a current control decision.";
   }
 
   function aiStatusLabel(status) {
-    return ({ loading: "Đang khởi tạo mô hình", warming_up: "Đang nạp cửa sổ trượt", ready: "Sẵn sàng (INT8)",
-      sensor_invalid: "Cảm biến không hợp lệ", out_of_domain: "Ngoài miền 5–50°C / 20–100%",
-      inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
-      stale: "Kết quả quá hạn", offline: "Chưa có kết nối", unavailable: "Chưa có dữ liệu AI" })[status] || "Trạng thái chưa xác định";
+    return ({ loading: "Initializing model", warming_up: "Filling sample window", ready: "Ready (INT8)",
+      sensor_invalid: "Invalid sensor readings", out_of_domain: "Outside the model range (5–50°C and 20–100% RH)",
+      inference_error: "Inference error", model_error: "Model error",
+      stale: "Stale result", offline: "Offline", unavailable: "Waiting for AI data" })[status] || "Unknown status";
   }
 
   function aiClassLabel(value) {
-    return ({ OFF: "OFF · Tắt", HOLD: "HOLD · Giữ", ON: "ON · Bật" })[value] || "—";
+    return ["OFF", "HOLD", "ON"].includes(value) ? value : "—";
   }
 
   function formatSignedRate(value, unit) {
@@ -455,23 +452,23 @@
     document.getElementById("aiReadings").textContent = "DHT20 · " +
       (status !== "stale" && validDisplayValue(t, -40, 80) && validDisplayValue(h, 0, 100)
         ? t.toFixed(2) + " °C · " + h.toFixed(2) + " %RH" : "—") +
-      (ready && typeof ai.fan_on_at_sample === "boolean" ? " · GPIO lúc lấy mẫu " + (ai.fan_on_at_sample ? "ON" : "OFF") : "");
+      (ready && typeof ai.fan_on_at_sample === "boolean" ? " · GPIO at sample time " + (ai.fan_on_at_sample ? "ON" : "OFF") : "");
     var count = ai && Number.isInteger(ai.evaluated_samples) && ai.evaluated_samples >= 0 ? ai.evaluated_samples : 0;
     document.getElementById("aiAgreement").textContent = ai && count > 0 && validDisplayValue(ai.agreement_pct, 0, 100)
-      ? "Khớp luật tức thời từ lúc khởi động · " + ai.agreement_pct.toFixed(1) + "% trên " + count + " mẫu" : "Chưa có mẫu đối chiếu.";
+      ? "Agreement with the current reference rule since boot · " + ai.agreement_pct.toFixed(1) + "% across " + count + " samples" : "Waiting for comparison samples.";
     var winCount = ai && Number.isInteger(ai.window_samples) ? ai.window_samples : null;
-    var windowLabel = winCount === null ? "" : winCount + (Number.isInteger(ai.window_capacity) ? "/" + ai.window_capacity : "") + " mẫu";
-    var tRate = ready ? formatSignedRate(ai.temp_slope_c_min, "°C/phút") : null;
-    var hRate = ready ? formatSignedRate(ai.humi_slope_pct_min, "%RH/phút") : null;
+    var windowLabel = winCount === null ? "" : winCount + (Number.isInteger(ai.window_capacity) ? "/" + ai.window_capacity : "") + " samples";
+    var tRate = ready ? formatSignedRate(ai.temp_slope_c_min, "°C/min") : null;
+    var hRate = ready ? formatSignedRate(ai.humi_slope_pct_min, "%RH/min") : null;
     var trendEl = document.getElementById("aiTrend");
     if (trendEl) {
       if (tRate && hRate) {
         trendEl.textContent = (windowLabel ? windowLabel + " · " : "") + "dT/dt " + tRate + " · dRH/dt " + hRate +
-          (typeof ai.residual_jitter === "number" ? " · độ dao động chuẩn hóa " + ai.residual_jitter.toFixed(3) : "");
+          (typeof ai.residual_jitter === "number" ? " · normalized residual variation " + ai.residual_jitter.toFixed(3) : "");
       } else if (status === "warming_up" && winCount !== null) {
-        trendEl.textContent = "Đang thu thập cửa sổ trượt · " + windowLabel;
+        trendEl.textContent = "Filling sample window · " + windowLabel;
       } else {
-        trendEl.textContent = "Xu hướng cửa sổ trượt: —";
+        trendEl.textContent = "Rolling-window trend · —";
       }
     }
     var probs = ready && Array.isArray(ai.probabilities) && ai.probabilities.length === 3 && ai.probabilities.every(function (p) {
@@ -479,11 +476,11 @@
     }) ? ai.probabilities : null;
     document.getElementById("aiProbabilities").textContent = "Softmax INT8 OFF / HOLD / ON: " + (probs
       ? probs.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") : "—");
-    document.getElementById("aiModel").textContent = "Mô hình: " + (ai && typeof ai.model_version === "string" ? ai.model_version : "—");
-    var latency = ready && validDisplayValue(ai.inference_ms, 0, 60000) ? " · suy luận " + ai.inference_ms.toFixed(2) + " ms" : "";
+    document.getElementById("aiModel").textContent = "Model · " + (ai && typeof ai.model_version === "string" ? ai.model_version : "—");
+    var latency = ready && validDisplayValue(ai.inference_ms, 0, 60000) ? " · inference " + ai.inference_ms.toFixed(2) + " ms" : "";
     document.getElementById("aiSample").textContent = ai
-      ? "Phiên " + (state.bootId || "—") + " · mẫu AI " + (Number.isInteger(ai.sample_seq) ? ai.sample_seq : "—") + latency + (status === "stale" ? " · cần dữ liệu mới" : "")
-      : "Chưa nhận kết quả suy luận.";
+      ? "Boot " + (state.bootId || "—") + " · AI sample " + (Number.isInteger(ai.sample_seq) ? ai.sample_seq : "—") + latency + (status === "stale" ? " · waiting for fresh data" : "")
+      : "Waiting for inference results.";
   }
 
   function applyAI(data) {
@@ -510,7 +507,7 @@
 
   function checkFreshness() {
     if (state.requestedMode && Date.now() - state.modeRequestedAt >= STALE_MS) {
-      els.controlStatus.textContent = "Chưa xác nhận thiết bị áp dụng " + state.requestedMode + ". Kiểm tra trạng thái rồi thử lại.";
+      els.controlStatus.textContent = "Device has yet to confirm " + state.requestedMode + ". Check its status and try again.";
       state.requestedMode = null;
     }
     if (state.lastFanAt && Date.now() - state.lastFanAt >= STALE_MS) {
@@ -518,7 +515,7 @@
       els.modeBadge.textContent = "—";
       els.fanSettingsBadge.textContent = "—";
       els.modeSettingsBadge.textContent = "—";
-      els.fanReason.textContent = "Trạng thái điều khiển quá hạn; đang chờ kết nối thiết bị.";
+      els.fanReason.textContent = "Controller status is stale. Waiting for the device.";
     }
     if (state.lastSensorAt && Date.now() - state.lastSensorAt >= STALE_MS) {
       els.temp.textContent = "--°C";
@@ -526,7 +523,7 @@
       els.soil.textContent = "--%";
       els.temp.className = "stat-value";
       els.humi.className = "stat-value";
-      els.message.textContent = "Dữ liệu quá hạn";
+      els.message.textContent = "Stale sensor data";
       els.message.className = "stat-sub unknown";
     }
     syncControls();
@@ -597,7 +594,7 @@
       }
 
       if (data.page === "setting_saved" && data.status === "OK") {
-        if (wifiSettingsMsg) wifiSettingsMsg.textContent = "Cấu hình thành công";
+        if (wifiSettingsMsg) wifiSettingsMsg.textContent = "Settings saved";
       }
     };
 
@@ -671,8 +668,8 @@
       .then(function (r) {
         return r.text().then(function (body) {
           if (!r.ok) throw new Error(r.status === 400 || r.status === 409
-            ? "HTTP " + r.status + " · Thiết bị từ chối yêu cầu. AI/SHADOW cần cấu hình ngưỡng dự phòng hợp lệ, lệnh quạt cần MANUAL."
-            : "Không xác nhận được lệnh (HTTP " + r.status + ").");
+            ? "HTTP " + r.status + " · Request rejected. AI and SHADOW require valid fallback thresholds. Direct fan commands require MANUAL."
+            : "Command unconfirmed (HTTP " + r.status + ").");
           return body;
         });
       })
@@ -684,8 +681,8 @@
         onSuccess(value);
       })
       .catch(function (err) {
-        console.warn("Không xác nhận được lệnh điều khiển: ", err);
-        els.controlStatus.textContent = err.message || "Không xác nhận được lệnh. Kiểm tra kết nối và trạng thái thiết bị.";
+        console.warn("Control command unconfirmed. ", err);
+        els.controlStatus.textContent = err.message || "Command unconfirmed. Check the connection and device status.";
       })
       .then(function () {
         state.controlPending = false;
@@ -697,7 +694,7 @@
     if (state.fanMode !== "MANUAL") return;
     var nextState = state.fanState === "ON" ? "OFF" : "ON";
     requestControl("/toggle-fan?state=" + nextState, ["ON", "OFF"], function () {
-      els.controlStatus.textContent = "Đã gửi yêu cầu quạt " + nextState + "; đang chờ trạng thái thiết bị.";
+      els.controlStatus.textContent = "Requested fan " + nextState + ". Waiting for device status.";
       // The response acknowledges the requested state; telemetry reports GPIO state.
       pollStatus();
     });
@@ -711,7 +708,7 @@
       state.modeSelectionDirty = false;
       state.requestedMode = mode;
       state.modeRequestedAt = Date.now();
-      els.controlStatus.textContent = "Đã gửi yêu cầu " + mode + "; đang chờ trạng thái thiết bị.";
+      els.controlStatus.textContent = "Requested " + mode + ". Waiting for device status.";
       pollStatus();
       pollAIStatus();
     });
@@ -737,28 +734,28 @@
 
   function updateFanLogicDescription() {
     fanLogicDescription.textContent = fanActivationLogic.value === "all"
-      ? "BẬT khi nhiệt độ ≥ ngưỡng BẬT VÀ độ ẩm ≥ ngưỡng BẬT. TẮT khi nhiệt độ ≤ ngưỡng TẮT HOẶC độ ẩm ≤ ngưỡng TẮT. Giữ trạng thái hiện tại trong vùng còn lại."
-      : "BẬT khi nhiệt độ ≥ ngưỡng BẬT HOẶC độ ẩm ≥ ngưỡng BẬT. TẮT khi nhiệt độ ≤ ngưỡng TẮT VÀ độ ẩm ≤ ngưỡng TẮT. Giữ trạng thái hiện tại trong vùng còn lại.";
+      ? "Switch ON when both readings reach or exceed their ON thresholds. Switch OFF when either reading reaches or falls below its OFF threshold. Otherwise keep the current state."
+      : "Switch ON when either reading reaches or exceeds its ON threshold. Switch OFF when both readings reach or fall below their OFF thresholds. Otherwise keep the current state.";
   }
 
   function validateFanConfig(config) {
     var valid = Object.keys(fanConfigInputs).every(function (key) {
       return typeof config[key] === "number" && Number.isFinite(config[key]);
     });
-    if (!valid) throw new Error("Nhập đầy đủ bốn ngưỡng bằng số hợp lệ.");
+    if (!valid) throw new Error("Enter a number for each of the four thresholds.");
     if (config.temperature_on < -40 || config.temperature_on > 80 ||
         config.temperature_off < -40 || config.temperature_off > 80) {
-      throw new Error("Ngưỡng nhiệt độ phải nằm trong khoảng -40 đến 80°C.");
+      throw new Error("Use temperature thresholds between -40 and 80°C.");
     }
     if (config.humidity_on < 0 || config.humidity_on > 100 ||
         config.humidity_off < 0 || config.humidity_off > 100) {
-      throw new Error("Ngưỡng độ ẩm phải nằm trong khoảng 0 đến 100%.");
+      throw new Error("Use humidity thresholds between 0 and 100%.");
     }
     if (config.temperature_off >= config.temperature_on || config.humidity_off >= config.humidity_on) {
-      throw new Error("Mỗi ngưỡng TẮT phải thấp hơn ngưỡng BẬT tương ứng.");
+      throw new Error("Each OFF threshold must be lower than its ON threshold.");
     }
     if (config.activation_logic !== "any" && config.activation_logic !== "all") {
-      throw new Error("Chọn điều kiện BẬT HOẶC hoặc VÀ.");
+      throw new Error("Select OR or AND for the ON condition.");
     }
   }
 
@@ -771,8 +768,8 @@
     fanActivationLogic.value = config.activation_logic === "all" ? "all" : "any";
     updateFanLogicDescription();
     setFanConfigStatus(config.configured
-      ? "Đang dùng cấu hình FAN đã lưu trên thiết bị."
-      : "Chưa cấu hình: AUTO giữ FAN OFF; chưa thể bật AI/SHADOW. Nhập và lưu các ngưỡng dự phòng.");
+      ? "Using the fan settings saved on the device."
+      : "Save the fallback thresholds to enable AI and SHADOW. AUTO keeps the fan OFF until valid thresholds are available.");
   }
 
   function loadFanConfig() {
@@ -784,15 +781,15 @@
       })
       .then(showFanConfig)
       .catch(function (err) {
-        console.warn("Không tải được cấu hình FAN: ", err);
-        setFanConfigStatus("Không tải được cấu hình đã lưu. Bạn có thể nhập đầy đủ các ngưỡng để lưu lại.", "error");
+        console.warn("Could not load fan settings. ", err);
+        setFanConfigStatus("Could not load saved settings. Enter all four thresholds to save a new configuration.", "error");
       })
       .then(function () { fanConfigFields.disabled = false; });
   }
 
   fanActivationLogic.addEventListener("change", updateFanLogicDescription);
   fanConfigForm.addEventListener("input", function () {
-    setFanConfigStatus("Chưa lưu thay đổi. Bấm Lưu cấu hình FAN để áp dụng.");
+    setFanConfigStatus("Unsaved changes. Select Save fan settings to apply them.");
   });
   fanConfigForm.addEventListener("submit", function (event) {
     event.preventDefault();
@@ -809,7 +806,7 @@
     }
 
     fanConfigFields.disabled = true;
-    setFanConfigStatus("Đang lưu cấu hình FAN...");
+    setFanConfigStatus("Saving fan settings...");
     fetch("/api/fan-config", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -822,12 +819,12 @@
       .then(function (saved) {
         if (!saved || saved.configured !== true) throw new Error("Configuration was not saved");
         showFanConfig(saved);
-        setFanConfigStatus("Đã lưu ngưỡng cho AUTO / SHADOW và dự phòng cho AI. Cấu hình được giữ sau khi khởi động lại.", "success");
+        setFanConfigStatus("Saved thresholds for AUTO, SHADOW and the AI fallback. These settings persist after a restart.", "success");
         pollStatus();
       })
       .catch(function (err) {
-        console.warn("Không xác nhận được việc lưu cấu hình FAN: ", err);
-        setFanConfigStatus("Không xác nhận được việc lưu cấu hình. Kiểm tra kết nối rồi thử lưu lại.", "error");
+        console.warn("Could not confirm that fan settings were saved. ", err);
+        setFanConfigStatus("Could not confirm the save. Check the connection and try again.", "error");
       })
       .then(function () { fanConfigFields.disabled = false; });
   });
@@ -847,19 +844,19 @@
       .then(function (data) {
         if (btn) btn.disabled = false;
         wifiSettingsMsg.textContent = data.ok
-          ? "Đang chuyển sang \"" + ssid + "\"..."
-          : "Thiết bị chưa xác nhận chuyển mạng. Vui lòng thử lại.";
+          ? "Switching to \"" + ssid + "\"..."
+          : "The device has yet to confirm the network switch. Try again.";
       })
       .catch(function () {
         if (btn) btn.disabled = false;
-        if (wifiSettingsMsg) wifiSettingsMsg.textContent = "Lỗi kết nối.";
+        if (wifiSettingsMsg) wifiSettingsMsg.textContent = "Connection failed.";
       });
   }
 
   function loadAndRenderWifiList() {
     var container = document.getElementById("wifiListSection");
     if (!container) return;
-    container.textContent = "Đang tải mạng WiFi đã lưu...";
+    container.textContent = "Loading saved WiFi networks...";
     var refreshButton = document.getElementById("wifiRefreshBtn");
     refreshButton.disabled = true;
     fetch("/api/wifi-list")
@@ -869,12 +866,12 @@
       })
       .then(function (list) {
         if (!Array.isArray(list) || list.length === 0) {
-          container.textContent = "Chưa có mạng đã lưu.";
+          container.textContent = "No saved networks.";
           return;
         }
         container.textContent = "";
         var heading = document.createElement("h3");
-        heading.textContent = "Mạng WiFi đã lưu";
+        heading.textContent = "Saved WiFi networks";
         container.appendChild(heading);
         list.forEach(function (item) {
           if (!item || typeof item.ssid !== "string") return;
@@ -885,8 +882,8 @@
           var btn = document.createElement("button");
           btn.type = "button";
           btn.className = "btn-toggle";
-          btn.textContent = "Chuyển";
-          btn.setAttribute("aria-label", "Chuyển sang " + item.ssid);
+          btn.textContent = "Switch";
+          btn.setAttribute("aria-label", "Switch to " + item.ssid);
           btn.addEventListener("click", function () {
             switchWifiNetwork(item.ssid, btn);
           });
@@ -896,7 +893,7 @@
         });
       })
       .catch(function () {
-        container.textContent = "Không tải được danh sách. Bấm Làm mới danh sách để thử lại.";
+        container.textContent = "Could not load the networks. Select Refresh list to try again.";
       })
       .then(function () { refreshButton.disabled = false; });
   }
@@ -910,7 +907,7 @@
   var serverUrlDirty = false;
   var fanSettingsLoaded = false;
   var viewRoutes = { dashboard: "#dashboard", wifi: "#settings/wifi", fan: "#settings/fan", tinyml: "#settings/tinyml" };
-  var viewTitles = { dashboard: "Dashboard", wifi: "Settings · Cấu hình WiFi", fan: "Settings · Cấu hình FAN", tinyml: "Settings · TinyML" };
+  var viewTitles = { dashboard: "Dashboard", wifi: "Settings · WiFi", fan: "Settings · Fan", tinyml: "Settings · TinyML" };
 
   function loadWifiSettings() {
     if (wifiSettingsLoaded) return;
@@ -926,7 +923,7 @@
         if (!serverUrlDirty && data && typeof data.url === "string") serverUrlInput.value = data.url;
       })
       .catch(function () {
-        if (!serverUrlDirty) wifiSettingsMsg.textContent = "Chưa tải được URL backend đã lưu. Bạn vẫn có thể nhập URL mới.";
+        if (!serverUrlDirty) wifiSettingsMsg.textContent = "Could not load the saved backend URL. You can enter a new URL.";
       });
   }
 
@@ -1003,7 +1000,7 @@
       var server = serverEl ? serverEl.value.trim() : "";
 
       if (!ssid && !server) {
-        wifiSettingsMsg.textContent = "Vui lòng nhập SSID WiFi hoặc URL backend.";
+        wifiSettingsMsg.textContent = "Enter a WiFi network name or a backend URL.";
         return;
       }
 
@@ -1019,10 +1016,10 @@
       if (activeWs && activeWs.readyState === WebSocket.OPEN) {
         activeWs.send(JSON.stringify(payload));
         wifiSettingsMsg.textContent = ssid
-          ? "Đã gửi cấu hình. Thiết bị sẽ khởi động lại..."
-          : "Đang lưu cấu hình...";
+          ? "Settings sent. The device will restart..."
+          : "Saving settings...";
       } else {
-        wifiSettingsMsg.textContent = "Chưa kết nối WebSocket, vui lòng thử lại.";
+        wifiSettingsMsg.textContent = "WebSocket disconnected. Try again after the device reconnects.";
       }
     });
   }

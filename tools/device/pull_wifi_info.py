@@ -1,17 +1,15 @@
-"""
-Installation requirements:
-python -m pip install -r tools/device/requirements.txt
+"""Read the saved Wi-Fi list from a Yolo Uno over USB.
 
-Usage:
+From the repository root, install tools/device/requirements.txt, close the serial
+monitor and run this command with the port shown by `pio device list`:
 
-1. Locate the default_8MB.csv file in PlatformIO.
-   find ~/.platformio -type f -name "default_8MB.csv"
+    python tools/device/pull_wifi_info.py --port /dev/ttyACM0
 
-2. Open the file and find the Offset and Size values of the spiffs partition. Use these values to specify the correct Offset and Size of the SPIFFS/LittleFS partition in flash.
-   python tools/device/pull_wifi_info.py --port /dev/ttyACM0 --offset ..... --size .....
-
-3. Once the default configuration is correct and the system can successfully read and mount the filesystem, run:
-   python tools/device/pull_wifi_info.py --port /dev/ttyACM0
+The default offset and size match the spiffs entry used for LittleFS in the
+board's default_8MB.csv partition table. For a custom layout, pass its values
+in hexadecimal with --offset and --size. The output at local/device/wifi_info.json
+contains plaintext passwords. A missing /wifi_list.json replaces it with an
+empty array and exits with status 1. See GUIDE.md for setup and storage details.
 """
 
 import argparse

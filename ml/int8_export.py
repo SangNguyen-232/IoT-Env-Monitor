@@ -1,7 +1,4 @@
-"""Replay fixed, sensor-level windows with the deployed INT8 flatbuffer."""
-import argparse
-from pathlib import Path
-import json
+"""Inspect and qualify quantized models during training export."""
 import numpy as np
 from trend_features import (LABELS, WINDOW_SIZE, FEATURE_NAMES, FEATURE_SCALES,
                             extract_window_features, scale_features, band_label)
@@ -85,7 +82,6 @@ def invoke_int8_tflite(tf, content: bytes, scaled_samples: np.ndarray) -> tuple[
 
 
 def evaluate_scenarios(tf, content):
-
     # Same final reading, reference hysteresis initially OFF, opposite trends.
     windows = {
         "rising": ([27.3, 27.5, 27.7, 27.9, 28.1, 28.3, 28.5], [63.8, 65, 66.2, 67.4, 68.6, 69.8, 71], "ON"),
@@ -121,11 +117,3 @@ def evaluate_scenarios(tf, content):
         "proposal": LABELS[int(np.argmax(probs[best]))], "scores_off_hold_on": list(map(float, probs[best])),
     }
     return report
-
-
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--model", type=Path, default=Path(__file__).parent / "models/dht_fan_model.tflite")
-    args = parser.parse_args()
-    import tensorflow as tf
-    print(json.dumps(evaluate_scenarios(tf, args.model.read_bytes()), indent=2))

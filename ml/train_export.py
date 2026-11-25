@@ -16,7 +16,7 @@ import sys
 
 import numpy as np
 
-from replay import invoke_int8_tflite, evaluate_scenarios
+from int8_export import invoke_int8_tflite, evaluate_scenarios
 from trend_features import (
     LABELS, FEATURE_NAMES, FEATURE_CLIP, FEATURE_SCALES, PROFILE, T_MIN, T_MAX, H_MIN, H_MAX,
     REF_T_ON, REF_T_OFF, REF_H_ON, REF_H_OFF, WINDOW_SIZE, MAX_STEP_GAP_MS, HORIZON_SECONDS,
