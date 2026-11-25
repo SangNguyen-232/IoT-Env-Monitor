@@ -14,5 +14,4 @@ void Save_wifi_to_list(String ssid, String pass);
 void Save_info_NoRestart(String ssid, String pass);
 
 extern String g_sensorApiUrl;
-void Load_server_url();
 void Save_server_url(const String &url);

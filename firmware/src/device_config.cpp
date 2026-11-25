@@ -6,6 +6,7 @@
 #include "secrets.h"
 
 String g_sensorApiUrl;
+static void Load_server_url();
 
 static void Load_info_File()
 {
@@ -36,7 +37,7 @@ void Delete_info_File()
         LittleFS.remove("/server.json");
     }
 
-    Serial.println("Thiết bị đã được reset thành công.");
+    Serial.println("Factory reset completed. Rebooting...");
     Serial.flush();
     delay(100);
     ESP.restart();
@@ -150,7 +151,7 @@ void Save_wifi_to_list(String ssid, String pass)
     if (f) { serializeJson(newDoc, f); f.close(); }
 }
 
-void Load_server_url()
+static void Load_server_url()
 {
     g_sensorApiUrl = SENSOR_API_URL;
     if (!LittleFS.exists("/server.json")) return;

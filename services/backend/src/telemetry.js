@@ -7,15 +7,19 @@ const TELEMETRY_FIELDS = new Set([
   'boot_id', 'sample_seq', 'sampled_uptime_ms', 'ai', 'fan_reason', 'fan_config',
   'fan_decision_sample_seq', 'fan_decided_uptime_ms'
 ]);
-const AI_FIELDS = new Set([
+const AI_REQUIRED_FIELDS = new Set([
   'model_version', 'status', 'sample_seq', 'sampled_uptime_ms', 'predicted_class',
   'probabilities', 'inference_ms', 'rule_class', 'agreement_pct', 'evaluated_samples'
+]);
+const AI_OPTIONAL_FIELDS = new Set([
+  'window_samples', 'temp_slope_c_min', 'humi_slope_pct_min',
+  'window_capacity', 'residual_jitter', 'fan_on_at_sample'
 ]);
 const FAN_CONFIG_FIELDS = new Set([
   'configured', 'activation_logic', 'temperature_on', 'temperature_off', 'humidity_on', 'humidity_off'
 ]);
 const AI_STATUSES = new Set([
-  'loading', 'ready', 'sensor_invalid', 'out_of_domain', 'inference_error', 'model_error', 'stale'
+  'loading', 'warming_up', 'ready', 'sensor_invalid', 'out_of_domain', 'inference_error', 'model_error', 'stale'
 ]);
 const FAN_CLASSES = ['OFF', 'HOLD', 'ON'];
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -27,22 +31,50 @@ const identifier = value => typeof value === 'string' && /^[A-Za-z0-9._:-]{1,64}
 
 function validAi(ai) {
   if (ai == null) return true;
-  if (!exactFields(ai, AI_FIELDS) || typeof ai.model_version !== 'string' || ai.model_version.length < 1 ||
+  if (!isObject(ai)) return false;
+  const keys = Object.keys(ai);
+  for (const req of AI_REQUIRED_FIELDS) {
+    if (!Object.prototype.hasOwnProperty.call(ai, req)) return false;
+  }
+  if (keys.some(key => !AI_REQUIRED_FIELDS.has(key) && !AI_OPTIONAL_FIELDS.has(key))) return false;
+  if (typeof ai.model_version !== 'string' || ai.model_version.length < 1 ||
       ai.model_version.length > 64 || /[\u0000-\u001f\u007f]/.test(ai.model_version) || !AI_STATUSES.has(ai.status) ||
       !isUint32(ai.sample_seq) || !isUint32(ai.sampled_uptime_ms) || !isUint32(ai.evaluated_samples) ||
       !finiteInRange(ai.inference_ms, 0, Number.MAX_VALUE) ||
+      (ai.window_samples !== undefined && (!Number.isInteger(ai.window_samples) || ai.window_samples < 0 || ai.window_samples > 16)) ||
+      (ai.temp_slope_c_min !== undefined && ai.temp_slope_c_min !== null && !finiteInRange(ai.temp_slope_c_min, -600, 600)) ||
+      (ai.humi_slope_pct_min !== undefined && ai.humi_slope_pct_min !== null && !finiteInRange(ai.humi_slope_pct_min, -600, 600)) ||
       (ai.rule_class !== null && !FAN_CLASSES.includes(ai.rule_class)) ||
       (ai.agreement_pct !== null && !finiteInRange(ai.agreement_pct, 0, 100)) ||
       (ai.evaluated_samples === 0 && ai.agreement_pct !== null) ||
       (ai.evaluated_samples > 0 && ai.agreement_pct === null)) return false;
 
-  if (ai.status !== 'ready') return ai.predicted_class === null && ai.probabilities === null;
+  // A predictive snapshot carries the capacity on every status. Older
+  // devices have either no window metadata or only counts and slopes.
+  const predictive = 'window_capacity' in ai || 'residual_jitter' in ai || 'fan_on_at_sample' in ai;
+  if (predictive) {
+    if (!Number.isInteger(ai.window_capacity) || ai.window_capacity < 2 || ai.window_capacity > 16 ||
+        !Number.isInteger(ai.window_samples) || ai.window_samples > ai.window_capacity) return false;
+    if (ai.status === 'ready') {
+      if (ai.window_samples !== ai.window_capacity || typeof ai.fan_on_at_sample !== 'boolean' ||
+          !finiteInRange(ai.residual_jitter, 0, Number.MAX_VALUE) || !FAN_CLASSES.includes(ai.rule_class) ||
+          !Number.isFinite(ai.temp_slope_c_min) || !Number.isFinite(ai.humi_slope_pct_min)) return false;
+    } else if (ai.residual_jitter !== null || ai.fan_on_at_sample !== null || ai.rule_class !== null ||
+               ai.temp_slope_c_min !== null || ai.humi_slope_pct_min !== null) return false;
+  }
+  if (ai.status !== 'ready') {
+    return ai.predicted_class === null && ai.probabilities === null &&
+      (ai.temp_slope_c_min === undefined || ai.temp_slope_c_min === null) &&
+      (ai.humi_slope_pct_min === undefined || ai.humi_slope_pct_min === null);
+  }
   if (!FAN_CLASSES.includes(ai.predicted_class) || !Array.isArray(ai.probabilities) || ai.probabilities.length !== 3 ||
       !ai.probabilities.every(value => finiteInRange(value, 0, 1))) return false;
-  // Softmax floats are rounded by firmware JSON serialization; tolerate that rounding.
+  // Each raw INT8 softmax score is quantized in units of 1/256. Saturation
+  // and rounding can leave the sum a few units away from 1 before serialization.
   const total = ai.probabilities.reduce((sum, value) => sum + value, 0);
   const selected = ai.probabilities[FAN_CLASSES.indexOf(ai.predicted_class)];
-  return Math.abs(total - 1) <= 0.002 && selected + 0.000001 >= Math.max(...ai.probabilities);
+  const tolerance = predictive ? 2 / 256 + 0.000001 : 0.002;
+  return Math.abs(total - 1) <= tolerance && selected + 0.000001 >= Math.max(...ai.probabilities);
 }
 
 function validFanConfig(config) {
@@ -115,4 +147,4 @@ function parseHistoryQuery(query) {
   return { deviceId: query.device_id, lanIp, afterId, untilId, limit, from: from || null, to: to || null };
 }
 
-module.exports = { TELEMETRY_FIELDS, validAi, validFanConfig, validExperimentFields, parseHistoryQuery };
+module.exports = { TELEMETRY_FIELDS, validExperimentFields, parseHistoryQuery };

@@ -71,13 +71,20 @@ void setup()
 
     xTaskCreate(led_blinky, "Task LED Blink", 2048, (void *)ctx, 2, NULL);
     xTaskCreate(neo_blinky, "Task NEO Blink", 2048, (void *)ctx, 2, NULL);
+    if (xTaskCreate(task_fan, "Task Fan", 4096, ctx, 2, &ctx->fanTask) != pdPASS) {
+        Serial.println("[BOOT] Could not create fan controller; relay remains OFF");
+    }
     // Float formatting, sensor I/O and WebSocket calls need nested stack headroom.
     if (xTaskCreate(temp_humi_monitor, "Task TEMP HUMI Monitor", 6144,
                     (void *)ctx, 2, NULL) != pdPASS) {
         Serial.println("[BOOT] Could not create sensor task");
     }
-    xTaskCreate(task_fan, "Task Fan", 4096, (void *)ctx, 2, NULL);
-    xTaskCreate(tiny_ml_task, "Tiny ML Task", 8192, (void *)ctx, 2, NULL);
+    if (xTaskCreate(tiny_ml_task, "Tiny ML Task", 8192, ctx, 2, nullptr) != pdPASS) {
+        xSemaphoreTake(ctx->mutexContext, portMAX_DELAY);
+        ctx->ml.status = AiStatus::ModelError;
+        xSemaphoreGive(ctx->mutexContext);
+        Serial.println("[BOOT] Could not create TinyML task; using deterministic fallback");
+    }
     xTaskCreate(task_database, "Task Database", 16384, (void *)ctx, 2, NULL);
     xTaskCreate(Task_Toggle_BOOT, "Task Toggle BOOT", 4096, NULL, 2, NULL);
 }

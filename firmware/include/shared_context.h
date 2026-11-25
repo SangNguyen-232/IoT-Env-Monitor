@@ -10,6 +10,8 @@ struct SharedContext {
     float temperature;
     float humidity;
     bool dhtSampleValid;
+    bool fanOnAtSample = false;
+    TaskHandle_t fanTask = nullptr;
     uint32_t dhtSampledAtMs;
     uint32_t sampleSeq = 0;
     char bootId[33] = {};

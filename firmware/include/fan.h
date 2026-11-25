@@ -15,5 +15,6 @@ extern FanConfig fan_decision_config;
 extern SemaphoreHandle_t xMutexFanControl;
 
 // Put the active-HIGH relay in its safe state before storage or networking starts.
+bool fan_commanded_on();
 void fan_init();
 void task_fan(void *pvParameters);

@@ -1,75 +1,109 @@
 {
   "architecture": [
-    2,
+    8,
+    64,
     32,
-    16,
     3
   ],
-  "best_epoch_by_validation_loss": 85,
-  "bytes": 4788,
-  "claims": {
-    "forecasting": false,
-    "hardware_validated": false,
-    "probabilities_calibrated": false,
-    "real_environment_efficacy_validated": false
-  },
-  "completed_epochs": 100,
+  "best_epoch_by_validation_loss": 63,
+  "bytes": 5536,
+  "completed_epochs": 70,
   "conversion": {
-    "class_disagreements": 0,
+    "float_validation_accuracy": 0.8866666666666667,
+    "heldout_samples": 7200,
     "input": {
-      "dtype": "float32",
+      "dtype": "int8",
+      "features": [
+        "u_temp",
+        "u_humi",
+        "v_temp",
+        "v_humi",
+        "s_temp",
+        "s_humi",
+        "jitter",
+        "fan_on_at_sample"
+      ],
+      "pre_divisors": [
+        4.0,
+        4.0,
+        4.0,
+        4.0,
+        4.0,
+        4.0,
+        4.0,
+        1.0
+      ],
+      "scale": 0.007843137718737125,
       "shape": [
         1,
-        2
+        8
       ],
-      "units": [
-        "C",
-        "%RH"
-      ]
+      "zero_point": -1
     },
-    "max_probability_absolute_error": 5.930662155151367e-06,
+    "int8_validation_accuracy": 0.8822222222222222,
+    "int8_vs_float32_class_agreement": 0.9791666666666666,
+    "max_probability_abs_diff": 0.2814428508281708,
+    "mean_probability_abs_diff": 0.01337197795510292,
     "operators": [
       {
         "name": "FULLY_CONNECTED",
-        "version": 1
+        "version": 4
       },
       {
         "name": "SOFTMAX",
-        "version": 1
+        "version": 2
       }
     ],
     "output": {
-      "dtype": "float32",
+      "dtype": "int8",
       "labels": [
         "OFF",
         "HOLD",
         "ON"
       ],
+      "scale": 0.00390625,
       "shape": [
         1,
         3
-      ]
+      ],
+      "zero_point": -128
     },
-    "samples": 10796
+    "quantization": "full_int8_io"
   },
-  "data_origin": "synthetic",
+  "data_origin": "synthetic-multi-regime-trajectories",
   "dataset": {
     "input_file_sha256": null,
-    "rows": 36000,
-    "sha256": "18b8f12a243801d3e36809bca072377ec1b7ae01c4a9b031b6c1d2ebf56c6984",
-    "split_method": "stratified-disjoint-unique-inputs",
+    "rows": 24000,
+    "sha256": "a5c03db3ce707f7a7516b08fb564cb6491d5c7e66dd4743d8f92b03ce9e439ae",
+    "split_method": "session-disjoint",
+    "split_session_counts": {
+      "test": 3600,
+      "train": 16800,
+      "validation": 3600
+    },
     "split_sessions": null,
     "split_sizes": {
-      "test": 5398,
-      "train": 25204,
-      "validation": 5398
+      "test": 3600,
+      "train": 16800,
+      "validation": 3600
     }
   },
   "domain": {
+    "activation_logic": "any",
     "humidity_percent": [
       20.0,
       100.0
     ],
+    "reference_thresholds_on_off": {
+      "humidity_pct": [
+        75.0,
+        70.0
+      ],
+      "temperature_c": [
+        30.0,
+        28.0
+      ]
+    },
     "temperature_c": [
       5.0,
       50.0
@@ -81,109 +115,154 @@
     "python": "3.12.16",
     "tensorflow": "2.21.0"
   },
-  "label_source": "synthetic-policy",
+  "hardware_validated": false,
+  "label_source": "simulated-future",
   "labels_by_index": [
     "OFF",
     "HOLD",
     "ON"
   ],
   "limitations": [
-    "Synthetic-policy accuracy measures agreement with a known teacher, not superiority over that teacher.",
-    "Operator labels measure imitation of operator choices, not optimal ventilation or energy savings.",
-    "Softmax values are uncalibrated; boundary mistakes and unseen conditions remain possible.",
-    "Physical fan response, RTOS timing and power safety require independent hardware experiments.",
-    "Exact training bytes may vary across TensorFlow/platform versions; versions, seed and hashes are recorded."
+    "Default training and evaluation use synthetic trajectories and assumed fan response. Real efficacy needs held-out physical sessions.",
+    "The forecast predicts the threshold band at +30 seconds; disturbances between now and that time may change the outcome.",
+    "INT8 softmax scores are dequantized to multiples of 1/256. Threshold 0.80 is a control gate, not a calibrated probability."
   ],
   "metrics": {
     "test": {
-      "fixed_policy_baseline": {
-        "accuracy": 1.0,
+      "early_on_forecasts_gate_080": {
+        "correct_future_on": 193,
+        "future_on_below_threshold": 306,
+        "proposed": 207
+      },
+      "eligible_early_start_gate_080": {
+        "dwell": "Unknown in single-decision episodes. Counts measure candidate starts before the ten-second dwell gate.",
+        "eligible_future_on": 145,
+        "eligible_static_hold_and_command_off": 587,
+        "false_negatives": 55,
+        "false_positives": 11,
+        "precision": 0.8910891089108911,
+        "recall": 0.6206896551724138,
+        "true_positives": 90
+      },
+      "int8_model": {
+        "accuracy": 0.8727777777777778,
         "confusion_matrix_true_rows_predicted_columns": [
           [
-            1387,
-            0,
-            0
+            834,
+            86,
+            8
           ],
           [
-            0,
-            814,
-            0
+            85,
+            925,
+            135
           ],
           [
-            0,
-            0,
-            3197
+            4,
+            140,
+            1383
           ]
         ],
         "recall": {
-          "HOLD": 1.0,
-          "OFF": 1.0,
-          "ON": 1.0
+          "HOLD": 0.8078602620087336,
+          "OFF": 0.8987068965517241,
+          "ON": 0.9056974459724951
         },
-        "samples": 5398,
+        "samples": 3600,
         "support": {
-          "HOLD": 814,
-          "OFF": 1387,
-          "ON": 3197
+          "HOLD": 1145,
+          "OFF": 928,
+          "ON": 1527
         }
       },
-      "model": {
-        "accuracy": 0.9966654316413487,
+      "ols_extrapolation_baseline": {
+        "accuracy": 0.8294444444444444,
         "confusion_matrix_true_rows_predicted_columns": [
           [
-            1386,
-            1,
-            0
+            750,
+            128,
+            50
           ],
           [
-            3,
+            73,
             797,
-            14
+            275
           ],
           [
-            0,
-            0,
-            3197
+            16,
+            72,
+            1439
           ]
         ],
         "recall": {
-          "HOLD": 0.9791154791154791,
-          "OFF": 0.9992790194664743,
-          "ON": 1.0
+          "HOLD": 0.6960698689956332,
+          "OFF": 0.8081896551724138,
+          "ON": 0.9423706614276359
         },
-        "samples": 5398,
+        "samples": 3600,
         "support": {
-          "HOLD": 814,
-          "OFF": 1387,
-          "ON": 3197
+          "HOLD": 1145,
+          "OFF": 928,
+          "ON": 1527
         }
       },
       "softmax_gate": {
-        "accepted_accuracy": 0.9998104265402844,
-        "accepted_errors": 1,
-        "accepted_samples": 5275,
-        "coverage": 0.9772137828825491,
-        "interpretation": "Uncalibrated softmax gate only; profile/freshness/domain gates are separate.",
+        "accepted_accuracy": 0.9501625135427952,
+        "accepted_errors": 138,
+        "accepted_samples": 2769,
+        "coverage": 0.7691666666666667,
+        "interpretation": "Dequantized INT8 softmax gate; window warmup, domain, and profile gates are enforced separately.",
         "minimum_max_softmax": 0.8,
-        "samples": 5398
+        "samples": 3600
+      },
+      "static_threshold_baseline": {
+        "accuracy": 0.7102777777777778,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            659,
+            202,
+            67
+          ],
+          [
+            162,
+            677,
+            306
+          ],
+          [
+            41,
+            265,
+            1221
+          ]
+        ],
+        "recall": {
+          "HOLD": 0.5912663755458515,
+          "OFF": 0.7101293103448276,
+          "ON": 0.7996070726915521
+        },
+        "samples": 3600,
+        "support": {
+          "HOLD": 1145,
+          "OFF": 928,
+          "ON": 1527
+        }
       },
       "train_majority_baseline": {
-        "accuracy": 0.5922563912560207,
+        "accuracy": 0.4241666666666667,
         "confusion_matrix_true_rows_predicted_columns": [
           [
             0,
             0,
-            1387
+            928
           ],
           [
             0,
             0,
-            814
+            1145
           ],
           [
             0,
             0,
-            3197
+            1527
           ]
         ],
         "recall": {
@@ -191,103 +270,149 @@
           "OFF": 0.0,
           "ON": 1.0
         },
-        "samples": 5398,
+        "samples": 3600,
         "support": {
-          "HOLD": 814,
-          "OFF": 1387,
-          "ON": 3197
+          "HOLD": 1145,
+          "OFF": 928,
+          "ON": 1527
         }
       }
     },
     "validation": {
-      "fixed_policy_baseline": {
-        "accuracy": 1.0,
+      "early_on_forecasts_gate_080": {
+        "correct_future_on": 168,
+        "future_on_below_threshold": 254,
+        "proposed": 178
+      },
+      "eligible_early_start_gate_080": {
+        "dwell": "Unknown in single-decision episodes. Counts measure candidate starts before the ten-second dwell gate.",
+        "eligible_future_on": 118,
+        "eligible_static_hold_and_command_off": 565,
+        "false_negatives": 40,
+        "false_positives": 3,
+        "precision": 0.9629629629629629,
+        "recall": 0.6610169491525424,
+        "true_positives": 78
+      },
+      "int8_model": {
+        "accuracy": 0.8822222222222222,
         "confusion_matrix_true_rows_predicted_columns": [
           [
-            1387,
-            0,
-            0
+            902,
+            71,
+            9
           ],
           [
-            0,
-            814,
-            0
+            110,
+            940,
+            112
           ],
           [
-            0,
-            0,
-            3197
+            2,
+            120,
+            1334
           ]
         ],
         "recall": {
-          "HOLD": 1.0,
-          "OFF": 1.0,
-          "ON": 1.0
+          "HOLD": 0.8089500860585198,
+          "OFF": 0.9185336048879837,
+          "ON": 0.9162087912087912
         },
-        "samples": 5398,
+        "samples": 3600,
         "support": {
-          "HOLD": 814,
-          "OFF": 1387,
-          "ON": 3197
+          "HOLD": 1162,
+          "OFF": 982,
+          "ON": 1456
         }
       },
-      "model": {
-        "accuracy": 0.9979622082252686,
+      "ols_extrapolation_baseline": {
+        "accuracy": 0.8341666666666666,
         "confusion_matrix_true_rows_predicted_columns": [
           [
-            1386,
-            1,
-            0
+            800,
+            140,
+            42
           ],
           [
-            0,
-            804,
-            10
+            81,
+            823,
+            258
           ],
           [
-            0,
-            0,
-            3197
+            11,
+            65,
+            1380
           ]
         ],
         "recall": {
-          "HOLD": 0.9877149877149877,
-          "OFF": 0.9992790194664743,
-          "ON": 1.0
+          "HOLD": 0.7082616179001722,
+          "OFF": 0.814663951120163,
+          "ON": 0.9478021978021978
         },
-        "samples": 5398,
+        "samples": 3600,
         "support": {
-          "HOLD": 814,
-          "OFF": 1387,
-          "ON": 3197
+          "HOLD": 1162,
+          "OFF": 982,
+          "ON": 1456
         }
       },
       "softmax_gate": {
-        "accepted_accuracy": 1.0,
-        "accepted_errors": 0,
-        "accepted_samples": 5290,
-        "coverage": 0.9799925898480919,
-        "interpretation": "Uncalibrated softmax gate only; profile/freshness/domain gates are separate.",
+        "accepted_accuracy": 0.9522955523672884,
+        "accepted_errors": 133,
+        "accepted_samples": 2788,
+        "coverage": 0.7744444444444445,
+        "interpretation": "Dequantized INT8 softmax gate; window warmup, domain, and profile gates are enforced separately.",
         "minimum_max_softmax": 0.8,
-        "samples": 5398
+        "samples": 3600
+      },
+      "static_threshold_baseline": {
+        "accuracy": 0.7219444444444445,
+        "confusion_matrix_true_rows_predicted_columns": [
+          [
+            701,
+            222,
+            59
+          ],
+          [
+            166,
+            696,
+            300
+          ],
+          [
+            35,
+            219,
+            1202
+          ]
+        ],
+        "recall": {
+          "HOLD": 0.5989672977624785,
+          "OFF": 0.7138492871690427,
+          "ON": 0.8255494505494505
+        },
+        "samples": 3600,
+        "support": {
+          "HOLD": 1162,
+          "OFF": 982,
+          "ON": 1456
+        }
       },
       "train_majority_baseline": {
-        "accuracy": 0.5922563912560207,
+        "accuracy": 0.40444444444444444,
         "confusion_matrix_true_rows_predicted_columns": [
           [
             0,
             0,
-            1387
+            982
           ],
           [
             0,
             0,
-            814
+            1162
           ],
           [
             0,
             0,
-            3197
+            1456
           ]
         ],
         "recall": {
@@ -295,121 +420,181 @@
           "OFF": 0.0,
           "ON": 1.0
         },
-        "samples": 5398,
+        "samples": 3600,
         "support": {
-          "HOLD": 814,
-          "OFF": 1387,
-          "ON": 3197
+          "HOLD": 1162,
+          "OFF": 982,
+          "ON": 1456
         }
       }
     }
   },
-  "model_version": "fan-policy-v1-bec2aad20791",
-  "normalization": "folded into first dense layer; runtime takes raw C and %RH",
-  "profile": "lab-or-30-28-75-70-v1",
-  "purpose": "lab fan action policy imitation",
-  "requested_epochs": 100,
-  "schema_version": 1,
+  "model_version": "fan-trend-int8-v2-8abd0b91c744",
+  "profile": "trend-or-30-28-75-70-30s-v2",
+  "purpose": "forecast OFF/HOLD/ON threshold region at +30 s under a sustained command",
+  "quantization": "post-training full-integer INT8 (int8 inputs, int8 weights, int32 biases, int8 outputs)",
+  "real_environment_efficacy_validated": false,
+  "requested_epochs": 70,
+  "scenario_verification": {
+    "falling": {
+      "fan_on_at_sample": false,
+      "humidity_percent": [
+        74.6,
+        74,
+        73.4,
+        72.8,
+        72.2,
+        71.6,
+        71
+      ],
+      "period_seconds": 5,
+      "proposal": "OFF",
+      "scores_off_hold_on": [
+        0.9609375,
+        0.0390625,
+        0.0
+      ],
+      "static_rule": "HOLD",
+      "temperature_c": [
+        29.7,
+        29.5,
+        29.3,
+        29.1,
+        28.9,
+        28.7,
+        28.5
+      ]
+    },
+    "low_score": {
+      "fan_on_at_sample": false,
+      "humidity_percent": [
+        74.8,
+        74.8,
+        74.8,
+        74.8,
+        74.8,
+        74.8,
+        74.8
+      ],
+      "period_seconds": 5,
+      "proposal": "HOLD",
+      "scores_off_hold_on": [
+        0.0,
+        0.55078125,
+        0.44921875
+      ],
+      "static_rule": "HOLD",
+      "temperature_c": [
+        27.0,
+        27.0,
+        27.0,
+        27.0,
+        27.0,
+        27.0,
+        27.0
+      ]
+    },
+    "rising": {
+      "fan_on_at_sample": false,
+      "humidity_percent": [
+        63.8,
+        65,
+        66.2,
+        67.4,
+        68.6,
+        69.8,
+        71
+      ],
+      "period_seconds": 5,
+      "proposal": "ON",
+      "scores_off_hold_on": [
+        0.0,
+        0.00390625,
+        0.99609375
+      ],
+      "static_rule": "HOLD",
+      "temperature_c": [
+        27.3,
+        27.5,
+        27.7,
+        27.9,
+        28.1,
+        28.3,
+        28.5
+      ]
+    },
+    "steady": {
+      "fan_on_at_sample": false,
+      "humidity_percent": [
+        71,
+        71,
+        71,
+        71,
+        71,
+        71,
+        71
+      ],
+      "period_seconds": 5,
+      "proposal": "HOLD",
+      "scores_off_hold_on": [
+        0.0,
+        0.99609375,
+        0.0
+      ],
+      "static_rule": "HOLD",
+      "temperature_c": [
+        28.5,
+        28.5,
+        28.5,
+        28.5,
+        28.5,
+        28.5,
+        28.5
+      ]
+    }
+  },
+  "schema_version": 2,
   "seed": 42,
-  "sha256": "bec2aad20791fa6f8b071bba0472d9a7bbd1b33f252433d33f243c33ec66fc27",
-  "teacher": {
-    "hold": "otherwise; preserve the previous AUTO state",
-    "off": "temperature <= 28 AND humidity <= 70",
-    "on": "temperature >= 30 OR humidity >= 75",
-    "require_both": false
-  },
-  "threshold_boundary_diagnostic": {
-    "conversion": {
-      "class_disagreements": 0,
-      "input": {
-        "dtype": "float32",
-        "shape": [
-          1,
-          2
-        ],
-        "units": [
-          "C",
-          "%RH"
-        ]
-      },
-      "max_probability_absolute_error": 7.3909759521484375e-06,
-      "operators": [
-        {
-          "name": "FULLY_CONNECTED",
-          "version": 1
-        },
-        {
-          "name": "SOFTMAX",
-          "version": 1
-        }
-      ],
-      "output": {
-        "dtype": "float32",
-        "labels": [
-          "OFF",
-          "HOLD",
-          "ON"
-        ],
-        "shape": [
-          1,
-          3
-        ]
-      },
-      "samples": 36
-    },
-    "description": "36 points at/on +/-0.01 of teacher thresholds; deliberately difficult diagnostic, not efficacy validation",
-    "metrics": {
-      "accuracy": 0.7222222222222222,
-      "confusion_matrix_true_rows_predicted_columns": [
-        [
-          0,
-          4,
-          0
-        ],
-        [
-          0,
-          6,
-          6
-        ],
-        [
-          0,
-          0,
-          20
-        ]
-      ],
-      "recall": {
-        "HOLD": 0.5,
-        "OFF": 0.0,
-        "ON": 1.0
-      },
-      "samples": 36,
-      "support": {
-        "HOLD": 12,
-        "OFF": 4,
-        "ON": 20
-      }
-    },
-    "softmax_gate": {
-      "accepted_accuracy": 0.7222222222222222,
-      "accepted_errors": 5,
-      "accepted_samples": 18,
-      "coverage": 0.5,
-      "interpretation": "Uncalibrated softmax gate only; profile/freshness/domain gates are separate.",
-      "minimum_max_softmax": 0.8,
-      "samples": 36
-    }
-  },
+  "sha256": "8abd0b91c74416bfaf274f6531e3ff7388200be4fc1ca1621dff048aa3f182cc",
   "training": {
     "batch_size": 128,
     "cpu_only": true,
     "deterministic_ops": true,
     "early_stopping": {
       "monitor": "val_loss",
-      "patience": 18,
+      "patience": 25,
       "restore_best_weights": true
     },
-    "learning_rate": 0.002,
+    "learning_rate": "CosineDecay(0.003, alpha=0.03)",
     "optimizer": "Adam",
     "threads": 1
+  },
+  "window": {
+    "capacity_samples": 7,
+    "feature_clip": 4.0,
+    "features": [
+      "u_temp",
+      "u_humi",
+      "v_temp",
+      "v_humi",
+      "s_temp",
+      "s_humi",
+      "jitter",
+      "fan_on_at_sample"
+    ],
+    "forecast_horizon_seconds": 30,
+    "max_step_gap_ms": 8000,
+    "minimum_warmup_samples": 7,
+    "nominal_sample_period_s": 5.0,
+    "pre_quantization_divisors": [
+      4.0,
+      4.0,
+      4.0,
+      4.0,
+      4.0,
+      4.0,
+      4.0,
+      1.0
+    ]
   }
 }

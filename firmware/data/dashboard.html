@@ -192,9 +192,9 @@
 
     <section class="card fan-config-card" aria-labelledby="fanConfigTitle">
       <div class="card-header">
-        <h2 id="fanConfigTitle">Ngưỡng AUTO / SHADOW và dự phòng cho AI</h2>
+        <h2 id="fanConfigTitle">Ngưỡng điều khiển quạt</h2>
       </div>
-      <p class="fan-config-help">Các ngưỡng này dùng cho AUTO / SHADOW và luật dự phòng của chế độ AI. Mỗi ngưỡng TẮT phải thấp hơn ngưỡng BẬT. Điều kiện để AI tham gia điều khiển được giải thích trong <a href="#settings/tinyml" data-view="tinyml">Settings · TinyML</a>.</p>
+      <p class="fan-config-help">AUTO và SHADOW điều khiển theo các ngưỡng đã lưu. Để AI điều khiển, chọn OR và đặt nhiệt độ bật/tắt 30/28°C, độ ẩm bật/tắt 75/70%. Với cấu hình khác, AI dùng luật dự phòng theo ngưỡng của bạn. <a href="#settings/tinyml" data-view="tinyml">Xem dự báo TinyML</a>.</p>
       <form id="fanConfigForm">
         <fieldset id="fanConfigFields" disabled>
           <legend class="sr-only">Ngưỡng điều khiển FAN</legend>
@@ -229,22 +229,26 @@
     <section id="tinymlView" class="app-view" aria-labelledby="pageTitle" hidden>
     <section class="card ai-card" aria-labelledby="aiTitle">
       <div class="card-header">
-        <h2 id="aiTitle">TinyML · Thí nghiệm điều khiển quạt</h2>
+        <h2 id="aiTitle">TinyML (INT8) · Dự báo xu hướng điều khiển quạt</h2>
         <span id="aiStatus" class="ai-status" role="status">Đang tải</span>
       </div>
       <div class="ai-grid">
-        <div><span class="ai-label">Đề xuất mô hình</span><strong id="aiProposal">—</strong></div>
-        <div><span class="ai-label">Luật lab tham chiếu</span><strong id="aiTeacher">—</strong></div>
-        <div><span class="ai-label">Mức khớp với luật từ lúc khởi động</span><strong id="aiAgreement">—</strong></div>
+        <div><span class="ai-label">Dự báo sau 30 giây</span><strong id="aiProposal">—</strong></div>
+        <div><span class="ai-label">Luật ngưỡng tức thời (hồ sơ chuẩn)</span><strong id="aiTeacher">—</strong></div>
+        <div><span class="ai-label">Lệnh GPIO10 hiện tại</span><strong id="aiRelay">—</strong></div>
       </div>
-      <p id="aiProbabilities" class="ai-detail">Softmax OFF / HOLD / ON: —</p>
+      <p id="aiDecision" class="ai-detail">Chưa nhận quyết định điều khiển.</p>
+      <p id="aiReadings" class="ai-detail">DHT20 · —</p>
+      <p id="aiTrend" class="ai-detail">Xu hướng cửa sổ trượt · —</p>
+      <p id="aiProbabilities" class="ai-detail">Softmax INT8 OFF / HOLD / ON: —</p>
+      <p id="aiAgreement" class="ai-detail">Chưa có mẫu đối chiếu.</p>
       <p id="aiSample" class="ai-detail">Chưa nhận kết quả suy luận.</p>
       <p id="aiModel" class="ai-detail">Mô hình: —</p>
       <details class="ai-explainer">
-        <summary>Cách đọc kết quả và phạm vi thử nghiệm</summary>
-        <p>OFF: đề xuất tắt; HOLD: giữ trạng thái; ON: đề xuất bật. Mô hình mẫu đi kèm học từ dữ liệu tổng hợp theo luật lab: ON khi T ≥ 30°C hoặc RH ≥ 75%; OFF khi T ≤ 28°C và RH ≤ 70%; HOLD trong vùng còn lại. Miền đầu vào: 5–50°C, 20–100% RH.</p>
-        <p>Softmax là đầu ra mô hình, chưa được hiệu chuẩn thành độ tin cậy. Mức khớp với luật không đo hiệu quả thông gió. Chỉ AI hợp lệ với softmax lớn nhất ≥ 0,8 và cấu hình khớp profile mô hình mới được dùng để điều khiển. Với mô hình đi kèm, phải lưu ngưỡng nhiệt độ BẬT/TẮT 30/28°C, độ ẩm BẬT/TẮT 75/70% và điều kiện HOẶC (OR). Nếu khác profile hoặc AI không hợp lệ, chế độ vẫn hiển thị AI nhưng quạt dùng luật dự phòng đã cấu hình.</p>
-        <p>Đây là mô hình giáo dục trong phòng lab. Chưa xác nhận khả năng giảm nhiệt, hút ẩm hoặc tiết kiệm điện. Độ ẩm đất chỉ được giám sát độc lập. Notification trên Dashboard là cảnh báo theo luật, tách biệt với kết quả TinyML.</p>
+        <summary>Cách đọc dự báo và quyết định của bộ giám sát</summary>
+        <p>Mỗi 5 giây, DHT20 cung cấp một mẫu. Từ 7 mẫu liên tiếp (khoảng 30 giây), firmware tính tốc độ thay đổi, tốc độ ở bước gần nhất và độ dao động quanh đường xu hướng. Mạng INT8 dùng các giá trị này cùng nhiệt độ, độ ẩm hiện tại và lệnh GPIO tại lúc lấy mẫu để đề xuất hành động cho 30 giây tới.</p>
+        <p>Luật tức thời dùng hồ sơ OR 30/28°C và 75/70% RH. HOLD giữ lệnh quạt trước đó. Trong SHADOW, so sánh đề xuất AI với GPIO do ngưỡng người dùng điều khiển. Tỷ lệ khớp đếm số lần mô hình đưa ra cùng hành động với luật tức thời.</p>
+        <p>Trong AI, đề xuất ON đủ điểm (≥ 0,80) có thể bật đón đầu ở dải trễ. Bộ giám sát giữ các ngưỡng bật/tắt, thời gian tối thiểu 10 giây và dùng luật dự phòng khi cửa sổ chưa đủ mẫu, mô hình lỗi, dữ liệu ngoài miền hoặc cấu hình khác hồ sơ. DHT20 lỗi hoặc quá hạn buộc GPIO về OFF ngay khi bộ điều khiển phát hiện.</p>
       </details>
     </section>
 

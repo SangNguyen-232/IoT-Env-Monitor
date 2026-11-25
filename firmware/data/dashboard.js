@@ -10,6 +10,8 @@
   var state = {
     fanState: null,
     fanMode: null,
+    fanReason: null,
+    fanDecisionSeq: null,
     lastFanAt: 0,
     lastSensorAt: 0,
     controlPending: false,
@@ -20,6 +22,8 @@
     ai: null,
     aiKey: null,
     aiAt: 0,
+    aiTemperature: null,
+    aiHumidity: null,
     bootId: null,
   };
 
@@ -378,12 +382,19 @@
       control_unavailable: "Chưa có trạng thái điều khiển",
       manual_on: "Lệnh bật thủ công", manual_off: "Lệnh tắt thủ công", manual_timeout: "Hết thời hạn bật thủ công",
       config_required: "Cần lưu cấu hình ngưỡng", sensor_invalid: "Dữ liệu cảm biến lỗi hoặc quá hạn",
-      mode_changed: "Đã đổi chế độ; tắt quạt và chờ chu kỳ điều khiển",
-      ai_on: "AI đề xuất bật", ai_off: "AI đề xuất tắt", ai_hold: "AI đề xuất giữ trạng thái",
+      mode_changed: "Đã đổi chế độ/ngưỡng; tắt quạt và chờ chu kỳ điều khiển",
+      ai_proactive_on: "AI bật đón đầu xu hướng tăng nhanh trước khi chạm ngưỡng tĩnh",
+      ai_on: "AI đề xuất bật",
+      ai_off: "AI đề xuất tắt",
+      ai_hold: "AI đề xuất giữ trạng thái",
+      ai_guard_threshold_on: "Bộ giám sát yêu cầu bật theo ngưỡng trên",
+      ai_guard_threshold_off: "Bộ giám sát yêu cầu tắt theo ngưỡng dưới",
+      ai_guard_hysteresis: "Bộ giám sát giữ quạt đang bật trong dải trễ",
       rule_on: "Luật ngưỡng yêu cầu bật", rule_off: "Luật ngưỡng yêu cầu tắt",
-      min_on_time: "Giữ ON đủ thời gian tối thiểu", min_off_time: "Giữ OFF đủ thời gian tối thiểu",
-      ai_fallback_low_score: "Dùng luật dự phòng: softmax chưa đạt 0,8",
-      ai_fallback_profile_mismatch: "Dùng luật dự phòng: ngưỡng hoặc điều kiện BẬT đã lưu chưa khớp profile của mô hình"
+      min_on_time: "Giữ ON đủ thời gian tối thiểu (10s)", min_off_time: "Giữ OFF đủ thời gian tối thiểu (10s)",
+      ai_fallback_warming_up: "Dùng luật dự phòng trong lúc chờ đủ cửa sổ trượt",
+      ai_fallback_low_score: "Dùng luật dự phòng: softmax INT8 chưa đạt 0,80",
+      ai_fallback_profile_mismatch: "Dùng luật dự phòng: cấu hình chưa tương thích mô hình"
     };
     if (labels[reason]) return labels[reason];
     if (typeof reason === "string" && reason.indexOf("ai_fallback_") === 0) {
@@ -397,13 +408,26 @@
     state.lastFanAt = Date.now();
     setFanBadge(data.fan_state === "ON");
     setModeBadge(data.fan_mode);
-    if (typeof data.fan_reason === "string") els.fanReason.textContent = "Bộ điều khiển: " + reasonLabel(data.fan_reason) + ".";
+    state.fanReason = typeof data.fan_reason === "string" ? data.fan_reason : null;
+    state.fanDecisionSeq = Number.isInteger(data.fan_decision_sample_seq) ? data.fan_decision_sample_seq : null;
+    els.fanReason.textContent = reasonLabel(state.fanReason) + (state.fanReason ? " · " + state.fanReason : "");
+    renderAIDecision();
     syncControls();
   }
 
+  function renderAIDecision() {
+    var fresh = state.lastFanAt && Date.now() - state.lastFanAt < STALE_MS;
+    document.getElementById("aiRelay").textContent = fresh ? state.fanState + " · " + state.fanMode : "—";
+    document.getElementById("aiDecision").textContent = fresh
+      ? reasonLabel(state.fanReason) + (state.fanReason ? " · " + state.fanReason : "") +
+        (state.fanDecisionSeq !== null ? " · mẫu điều khiển " + state.fanDecisionSeq : "")
+      : "Chưa nhận quyết định điều khiển còn hiệu lực.";
+  }
+
   function aiStatusLabel(status) {
-    return ({ loading: "Đang tải mô hình", ready: "Có kết quả", sensor_invalid: "Cảm biến không hợp lệ",
-      out_of_domain: "Ngoài miền mô hình", inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
+    return ({ loading: "Đang khởi tạo mô hình", warming_up: "Đang nạp cửa sổ trượt", ready: "Sẵn sàng (INT8)",
+      sensor_invalid: "Cảm biến không hợp lệ", out_of_domain: "Ngoài miền 5–50°C / 20–100%",
+      inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
       stale: "Kết quả quá hạn", offline: "Chưa có kết nối", unavailable: "Chưa có dữ liệu AI" })[status] || "Trạng thái chưa xác định";
   }
 
@@ -411,26 +435,52 @@
     return ({ OFF: "OFF · Tắt", HOLD: "HOLD · Giữ", ON: "ON · Bật" })[value] || "—";
   }
 
+  function formatSignedRate(value, unit) {
+    if (!validDisplayValue(value, -600, 600)) return null;
+    return (value >= 0 ? "+" : "") + value.toFixed(2) + " " + unit;
+  }
+
   function renderAI() {
     var ai = state.ai;
     var status = ai ? ai.status : "loading";
     if (ai && (!state.aiAt || Date.now() - state.aiAt >= STALE_MS)) status = "stale";
     var ready = status === "ready";
+    renderAIDecision();
     var statusEl = document.getElementById("aiStatus");
     statusEl.textContent = aiStatusLabel(status);
     statusEl.className = "ai-status" + (ready ? " ready" : " pending");
     document.getElementById("aiProposal").textContent = ready ? aiClassLabel(ai.predicted_class) : "—";
-    document.getElementById("aiTeacher").textContent = ai && status !== "stale" ? aiClassLabel(ai.rule_class) : "—";
+    document.getElementById("aiTeacher").textContent = ready ? aiClassLabel(ai.rule_class) : "—";
+    var t = state.aiTemperature, h = state.aiHumidity;
+    document.getElementById("aiReadings").textContent = "DHT20 · " +
+      (status !== "stale" && validDisplayValue(t, -40, 80) && validDisplayValue(h, 0, 100)
+        ? t.toFixed(2) + " °C · " + h.toFixed(2) + " %RH" : "—") +
+      (ready && typeof ai.fan_on_at_sample === "boolean" ? " · GPIO lúc lấy mẫu " + (ai.fan_on_at_sample ? "ON" : "OFF") : "");
     var count = ai && Number.isInteger(ai.evaluated_samples) && ai.evaluated_samples >= 0 ? ai.evaluated_samples : 0;
     document.getElementById("aiAgreement").textContent = ai && count > 0 && validDisplayValue(ai.agreement_pct, 0, 100)
-      ? ai.agreement_pct.toFixed(1) + "% · " + count + " mẫu" : "Chưa có mẫu đối chiếu";
+      ? "Khớp luật tức thời từ lúc khởi động · " + ai.agreement_pct.toFixed(1) + "% trên " + count + " mẫu" : "Chưa có mẫu đối chiếu.";
+    var winCount = ai && Number.isInteger(ai.window_samples) ? ai.window_samples : null;
+    var windowLabel = winCount === null ? "" : winCount + (Number.isInteger(ai.window_capacity) ? "/" + ai.window_capacity : "") + " mẫu";
+    var tRate = ready ? formatSignedRate(ai.temp_slope_c_min, "°C/phút") : null;
+    var hRate = ready ? formatSignedRate(ai.humi_slope_pct_min, "%RH/phút") : null;
+    var trendEl = document.getElementById("aiTrend");
+    if (trendEl) {
+      if (tRate && hRate) {
+        trendEl.textContent = (windowLabel ? windowLabel + " · " : "") + "dT/dt " + tRate + " · dRH/dt " + hRate +
+          (typeof ai.residual_jitter === "number" ? " · độ dao động chuẩn hóa " + ai.residual_jitter.toFixed(3) : "");
+      } else if (status === "warming_up" && winCount !== null) {
+        trendEl.textContent = "Đang thu thập cửa sổ trượt · " + windowLabel;
+      } else {
+        trendEl.textContent = "Xu hướng cửa sổ trượt: —";
+      }
+    }
     var probs = ready && Array.isArray(ai.probabilities) && ai.probabilities.length === 3 && ai.probabilities.every(function (p) {
       return validDisplayValue(p, 0, 1);
     }) ? ai.probabilities : null;
-    document.getElementById("aiProbabilities").textContent = "Softmax OFF / HOLD / ON: " + (probs
-      ? probs.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") + " · chưa hiệu chuẩn độ tin cậy" : "—");
+    document.getElementById("aiProbabilities").textContent = "Softmax INT8 OFF / HOLD / ON: " + (probs
+      ? probs.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") : "—");
     document.getElementById("aiModel").textContent = "Mô hình: " + (ai && typeof ai.model_version === "string" ? ai.model_version : "—");
-    var latency = ready && validDisplayValue(ai.inference_ms, 0, 60000) ? " · suy luận " + ai.inference_ms.toFixed(1) + " ms" : "";
+    var latency = ready && validDisplayValue(ai.inference_ms, 0, 60000) ? " · suy luận " + ai.inference_ms.toFixed(2) + " ms" : "";
     document.getElementById("aiSample").textContent = ai
       ? "Phiên " + (state.bootId || "—") + " · mẫu AI " + (Number.isInteger(ai.sample_seq) ? ai.sample_seq : "—") + latency + (status === "stale" ? " · cần dữ liệu mới" : "")
       : "Chưa nhận kết quả suy luận.";
@@ -452,6 +502,8 @@
       state.aiAt = Date.now();
     }
     state.bootId = bootId;
+    state.aiTemperature = data.temperature;
+    state.aiHumidity = data.humidity;
     state.ai = ai;
     renderAI();
   }
@@ -498,9 +550,11 @@
       }
 
       if (!data || typeof data !== "object" || Array.isArray(data)) return;
-      var hasSensorSnapshot = ["temperature", "humidity", "soil_moisture"].some(function (key) {
-        return Object.prototype.hasOwnProperty.call(data, key);
-      });
+      // AI notifications also carry their DHT readings. Only sensor snapshots
+      // refresh the independent soil, LCD and monitoring chart.
+      var hasSensorSnapshot = Object.prototype.hasOwnProperty.call(data, "soil_moisture") ||
+        Object.prototype.hasOwnProperty.call(data, "lcd_state") || (!data.ai &&
+        (Object.prototype.hasOwnProperty.call(data, "temperature") || Object.prototype.hasOwnProperty.call(data, "humidity")));
       if (hasSensorSnapshot) {
         state.lastSensorAt = Date.now();
         function sampleValue(value, min, max) {
@@ -617,7 +671,7 @@
       .then(function (r) {
         return r.text().then(function (body) {
           if (!r.ok) throw new Error(r.status === 400 || r.status === 409
-            ? "Thiết bị từ chối yêu cầu. AI/SHADOW cần cấu hình ngưỡng dự phòng hợp lệ; lệnh quạt cần MANUAL."
+            ? "HTTP " + r.status + " · Thiết bị từ chối yêu cầu. AI/SHADOW cần cấu hình ngưỡng dự phòng hợp lệ, lệnh quạt cần MANUAL."
             : "Không xác nhận được lệnh (HTTP " + r.status + ").");
           return body;
         });

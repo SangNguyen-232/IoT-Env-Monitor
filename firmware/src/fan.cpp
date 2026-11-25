@@ -1,4 +1,5 @@
 #include "fan.h"
+#include <atomic>
 #include "shared_context.h"
 #include "web_server.h"
 #include "serial_log.h"
@@ -14,11 +15,24 @@ FanConfig fan_config;
 FanConfig fan_decision_config;
 SemaphoreHandle_t xMutexFanControl = xSemaphoreCreateMutex();
 
+static std::atomic<bool> appliedCommand{false};
+
+bool fan_commanded_on()
+{
+    return appliedCommand.load(std::memory_order_relaxed);
+}
+
+static void writeRelay(bool on)
+{
+    digitalWrite(FAN_PIN, on ? HIGH : LOW);
+    appliedCommand.store(on, std::memory_order_relaxed);
+}
+
 void fan_init()
 {
     digitalWrite(FAN_PIN, LOW);
     pinMode(FAN_PIN, OUTPUT);
-    digitalWrite(FAN_PIN, LOW);
+    writeRelay(false);
 }
 
 void task_fan(void *pvParameters)
@@ -32,22 +46,23 @@ void task_fan(void *pvParameters)
 
     while (1) {
         FanPolicyInput input;
-        if (ctx != nullptr && ctx->mutexContext != nullptr
-                && xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(200)) == pdTRUE) {
-            input.temperature = ctx->temperature;
-            input.humidity = ctx->humidity;
-            input.dhtValid = ctx->dhtSampleValid;
-            input.dhtSampledAtMs = ctx->dhtSampledAtMs;
-            input.sampleSeq = ctx->sampleSeq;
-            input.ml = ctx->ml;
-            xSemaphoreGive(ctx->mutexContext);
-        }
-
         FanPolicyResult result{false, false, "control_unavailable"};
         String current_mode;
         bool mode_available = false;
         if (xMutexFanControl != nullptr
                 && xSemaphoreTake(xMutexFanControl, pdMS_TO_TICKS(200)) == pdTRUE) {
+            // Keep the sampled inputs current through the GPIO commit. The sensor
+            // can publish the next (possibly invalid) reading as soon as this finishes.
+            const bool lockedSensor = ctx && ctx->mutexContext
+                && xSemaphoreTake(ctx->mutexContext, pdMS_TO_TICKS(100)) == pdTRUE;
+            if (lockedSensor) {
+                input.temperature = ctx->temperature;
+                input.humidity = ctx->humidity;
+                input.dhtValid = ctx->dhtSampleValid;
+                input.dhtSampledAtMs = ctx->dhtSampledAtMs;
+                input.sampleSeq = ctx->sampleSeq;
+                input.ml = ctx->ml;
+            }
             input.controlAvailable = true;
             input.mode = fan_requested_mode;
             input.manualState = fan_manual_state;
@@ -56,7 +71,8 @@ void task_fan(void *pvParameters)
 
             // Apply the output and publish its actual state atomically with the
             // control snapshot. HTTP handlers only change the requested state.
-            digitalWrite(FAN_PIN, result.on ? HIGH : LOW);
+            writeRelay(result.on);
+            if (lockedSensor) xSemaphoreGive(ctx->mutexContext);
             global_fan_state = result.on ? "ON" : "OFF";
             global_fan_mode = fan_mode_name(input.mode);
             fan_last_reason = result.reason;
@@ -75,12 +91,12 @@ void task_fan(void *pvParameters)
             result = fan_policy_step(policy, input, FanConfig{});
             // Physical shutoff never depends on obtaining the reporting mutex.
             // The actual shared state is resynchronized on the next valid lock.
-            digitalWrite(FAN_PIN, LOW);
+            writeRelay(false);
         }
 
         if (result.manualTimedOut) {
             serialLogLock();
-            Serial.println("[FAN] MANUAL chay qua 5 phut -> tu tat quat");
+            Serial.println("[FAN] MANUAL runtime exceeded 5 minutes -> forcing fan OFF");
             serialLogUnlock();
         }
 
@@ -91,10 +107,17 @@ void task_fan(void *pvParameters)
             if (mode_available) last_reported_mode = current_mode;
             last_reported_reason = result.reason;
 
+            serialLogLock();
+            Serial.printf("[FAN] sample=%lu decided_ms=%lu mode=%s state=%s fan_reason=%s\n",
+                          static_cast<unsigned long>(input.sampleSeq), static_cast<unsigned long>(input.now),
+                          mode_available ? current_mode.c_str() : "--", result.on ? "ON" : "OFF", result.reason);
+            serialLogUnlock();
+
             String wsPayload = "{\"fan_state\":\"" + String(result.on ? "ON" : "OFF") + "\"";
             if (mode_available) wsPayload += ",\"fan_mode\":\"" + current_mode + "\"";
             wsPayload += ",\"fan_reason\":\"" + String(result.reason) + "\"";
-            wsPayload += "}";
+            wsPayload += ",\"fan_decision_sample_seq\":" + String(input.sampleSeq);
+            wsPayload += ",\"fan_decided_uptime_ms\":" + String(input.now) + "}";
             Webserver_sendata(wsPayload);
             database_event_pending = true;
         }
@@ -109,6 +132,6 @@ void task_fan(void *pvParameters)
             database_event_pending = false;
         }
 
-        vTaskDelay(pdMS_TO_TICKS(100));
+        ulTaskNotifyTake(pdTRUE, pdMS_TO_TICKS(100));
     }
 }

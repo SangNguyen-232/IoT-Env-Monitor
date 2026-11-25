@@ -119,19 +119,19 @@ static void flushPostQueue()
         serialLogLock();
         if (httpCode >= 200 && httpCode < 300)
         {
-            Serial.printf("[DB] POST thành công -> %d (còn %d)\n", httpCode, postQCount - 1);
+            Serial.printf("[DB] POST succeeded -> %d (%d queued)\n", httpCode, postQCount - 1);
             serialLogUnlock();
             popPost();
         }
         else if (httpCode == 400 || httpCode == 413)
         {
-            Serial.printf("[DB] POST bỏ payload không hợp lệ -> %d\n", httpCode);
+            Serial.printf("[DB] POST dropped invalid payload -> %d\n", httpCode);
             serialLogUnlock();
             popPost();
         }
         else
         {
-            Serial.printf("[DB] POST thất bại -> %d, giữ buffer (%d)\n", httpCode, postQCount);
+            Serial.printf("[DB] POST failed -> %d, retaining queue (%d)\n", httpCode, postQCount);
             serialLogUnlock();
             break;
         }

@@ -11,5 +11,6 @@
         "initializer_list": "cpp",
         "span": "cpp",
         "regex": "cpp"
-    }
+    },
+    "cmake.sourceDirectory": "/home/sang/Desktop/IoT-Env-Monitor/tools/replay"
 }

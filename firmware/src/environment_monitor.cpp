@@ -1,4 +1,5 @@
 #include "environment_monitor.h"
+#include "fan.h"
 #include "risk_policy.h"
 #include "web_server.h"
 #include "shared_context.h"
@@ -7,7 +8,6 @@
 #include "ai_telemetry.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>
-#include <WiFi.h>
 #include <Wire.h>
 #include <DHT20.h>
 #include <LiquidCrystal_I2C.h>
@@ -40,9 +40,13 @@ void temp_humi_monitor(void *pvParameters)
     vTaskDelay(pdMS_TO_TICKS(5000));
     lcd.clear();
 
+    const TickType_t period = pdMS_TO_TICKS(5000);
+    TickType_t lastWake = xTaskGetTickCount();
     while (1) {
-        const int dht_status = dht20.read();
+        // A disconnected sensor can be detected before the library enters its measurement wait.
+        const int dht_status = dht20.isConnected() ? dht20.read() : DHT20_ERROR_CONNECT;
         const uint32_t dht_sampled_at = millis();
+        const bool fanAtSample = fan_commanded_on();
         float temperature = dht20.getTemperature();
         float humidity = dht20.getHumidity();
 
@@ -65,6 +69,7 @@ void temp_humi_monitor(void *pvParameters)
             ctx->temperature = temperature;
             ctx->humidity = humidity;
             ctx->dhtSampleValid = dht_ok;
+            ctx->fanOnAtSample = fanAtSample;
             ctx->dhtSampledAtMs = dht_sampled_at;
             ++ctx->sampleSeq;
             if (ctx->sampleSeq == 0) ++ctx->sampleSeq;
@@ -98,6 +103,7 @@ void temp_humi_monitor(void *pvParameters)
             capturedLcdState = ctx->lcdState;
 
             xSemaphoreGive(ctx->mutexContext);
+            if (ctx->fanTask && !dht_ok) xTaskNotifyGive(ctx->fanTask);
             xSemaphoreGive(ctx->semDBUpdate);
         }
 
@@ -141,6 +147,7 @@ void temp_humi_monitor(void *pvParameters)
         serializeJson(wsPayload, wsJson);
         Webserver_sendata(wsJson);
 
-        vTaskDelay(pdMS_TO_TICKS(5000));
+        if (xTaskGetTickCount() - lastWake >= period) lastWake = xTaskGetTickCount();
+        else vTaskDelayUntil(&lastWake, period);
     }
 }

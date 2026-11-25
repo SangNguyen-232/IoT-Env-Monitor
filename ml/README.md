@@ -1,96 +1,72 @@
-# TinyML điều khiển quạt trong phòng lab
+# Predictive trend-aware TinyML on ESP32-S3
 
-Mô hình học đề xuất **OFF / HOLD / ON** từ nhiệt độ (°C) và độ ẩm không khí (%RH), chạy cục bộ trên ESP32. HOLD yêu cầu giữ trạng thái AUTO trước đó; không phải tốc độ quạt trung bình. Quạt/relay chỉ nhận ON/OFF. AI không dự báo nhiệt độ tương lai.
+The DHT20 produces one ambient temperature and relative humidity sample about every five seconds. The network forecasts which hysteresis region the environment will occupy **30 seconds after the newest sample**, assuming the current fan command persists. A rising and a falling trace ending at the same reading can therefore produce different proposals. The forecast runs locally. The deterministic supervisor owns the relay.
 
-Trên giao diện thiết bị, mở **Settings → TinyML** để xem kết quả suy luận, xác suất, phiên bản mô hình và hướng dẫn thí nghiệm. Cấu hình ngưỡng, chọn chế độ và điều khiển quạt nằm riêng tại **Settings → Cấu hình FAN**; kết nối mạng nằm tại **Settings → Cấu hình WiFi**. Dashboard chính chỉ giữ các thông tin giám sát theo bố cục cũ.
+## Forecast contract
 
-Mô hình kèm theo được huấn luyện bằng dữ liệu **tổng hợp**, học lại chính sách `lab-or-30-28-75-70-v1`:
+The training target uses a future T/RH observation with the fixed lab OR profile. The class is **ON** if future T ≥ 30°C or RH ≥ 75%, **OFF** if future T ≤ 28°C and RH ≤ 70%, and **HOLD** elsewhere. HOLD requests the existing relay state. The head predicts three classes. The dashboard exposes the proposal, its softmax scores, the static rule class for the current sample and the actual fan decision.
 
-- ON khi `T >= 30` **hoặc** `RH >= 75`.
-- OFF khi `T <= 28` **và** `RH <= 70`.
-- HOLD trong các trường hợp còn lại.
+The input window requires seven consecutive valid in-domain readings, spanning nominally 30 seconds from first to last. Sequence gaps, a zero time step, an interval over eight seconds, an invalid reading or an out-of-domain reading restart warmup. The input range gate accepts 5–50°C and 20–100% RH. Synthetic episodes emphasize readings near the control thresholds. Generalization across the full input range needs field data. Python and firmware use actual sample timestamps to compute the eight features in the following order.
 
-Miền đã học là `5–50 °C`, `20–100 %RH`. Các ngưỡng chỉ định nghĩa bài thực hành; không phải tiêu chuẩn sức khỏe, thông gió hay bảo vệ thiết bị. Độ chính xác đo mức khớp với nhãn; luật giáo viên là baseline chính xác tuyệt đối trên nhãn tổng hợp. Mô hình học máy không có ưu thế về độ chính xác so với luật đó. Xác suất softmax chưa được hiệu chuẩn, không được gọi là xác suất quyết định đúng. Quạt tuần hoàn cũng không tự hút ẩm hoặc hạ nhiệt độ phòng kín.
+1. Current temperature relative to the OFF threshold, in temperature-band units of 2°C.
+2. Current humidity relative to the OFF threshold, in humidity-band units of 5 percentage points.
+3. Temperature trend by ordinary least squares over all seven samples, in bands per minute.
+4. Humidity trend over the same window, in bands per minute.
+5. Temperature rate between the last two samples, in bands per minute.
+6. Humidity rate between the last two samples, in bands per minute.
+7. Variation around the two fitted lines. Divide each residual by its channel's band width, then compute the square root of the mean of the two squared residuals **summed** at each time step.
+8. The fan GPIO command sampled before actuation for this DHT reading (OFF = 0, ON = 1). Physical fan motion requires a separate observation.
 
-Chế độ **AI** chỉ dùng đề xuất mô hình khi cấu hình quạt khớp đúng profile đã học: nhiệt độ bật/tắt `30/28 °C`, độ ẩm bật/tắt `75/70 %RH`, logic bật **OR** (`requireBoth=false`). Khi cấu hình khác, bộ điều khiển dùng luật theo cấu hình đã lưu và báo `ai_fallback_profile_mismatch`; đổi cấu hình không tự huấn luyện lại mô hình. Các điều kiện về mẫu đo mới/hợp lệ, miền đầu vào, trạng thái mô hình và ngưỡng softmax vẫn phải thỏa mãn. Chế độ **SHADOW** vẫn cho phép quan sát đề xuất AI với cấu hình khác, trong khi quạt thực thi luật cấu hình; mức khớp của mô hình luôn được tính với teacher cố định đã học.
+Channels 1–7 are clipped to ±4 and divided by 4. The fan bit passes through directly. The network has two ReLU hidden layers of widths 64 and 32, and a three-class softmax. The converter calibrates activations on a seeded subset of training windows. Feature extraction uses floating-point arithmetic, followed by quantization using the exported input scale and zero point. All graph tensors are INT8 or INT32. Weights use a single scale per tensor for compatibility with the vendored fully-connected kernel. The firmware dequantizes the three INT8 outputs for display and gating. Its gate accepts a peak score of at least 0.80. The scores have 1/256 resolution and their sum can differ slightly from one.
 
-## Kết quả bản mô hình bàn giao
+## Replay the shipped artifact
 
-Các số liệu sau thuộc `fan-policy-v1-bec2aad20791`, mô hình float32 4.788 byte; chi tiết nguồn dữ liệu, hash và confusion matrix nằm trong `models/fan_model_manifest.json`:
-
-- Tổng cộng 36.000 mẫu tổng hợp: train 25.204, validation 5.398, test 5.398. Hai lần huấn luyện trên cùng môi trường đã tái tạo byte model và dataset giống nhau.
-- Trên test: đúng 5.380/5.398 mẫu (**99,6665%**), **18 mẫu sai**; baseline luật teacher đúng 100% vì chính luật đó tạo nhãn.
-- Với `max(softmax) >= 0.8`, test giữ 5.275/5.398 mẫu (**97,7214% độ phủ**), còn **1 mẫu sai** trong nhóm giữ lại (**99,9810% đúng có điều kiện**).
-- Chẩn đoán 36 điểm tại/sát các ngưỡng: **10 điểm sai**; bộ lọc softmax giữ 18 điểm nhưng vẫn còn **5 điểm sai**. Sai số gần ngưỡng chưa được loại bỏ bằng bộ lọc.
-- Chuyển đổi Keras → TFLite được đối chiếu trên toàn bộ 10.796 mẫu validation/test: không lệch lớp; sai số xác suất tuyệt đối tối đa khoảng `5,93 × 10^-6`.
-- Runtime **TFLite Micro vendored chạy trên host** đã suy luận 10.836 mẫu (validation/test, 36 điểm sát ngưỡng và 4 góc miền), không lệch lớp so với desktop TFLite; sai số xác suất tối đa khoảng `7,87 × 10^-6`. Arena dùng 1.360/16.384 byte trên host 64 bit. Đây không phải số đo bộ nhớ hay thời gian thực trên ESP32.
-
-Các kiểm tra này xác nhận quy trình dữ liệu và khả năng thực thi model trong phạm vi host. **Chưa xác nhận chạy trên phần cứng hoặc hiệu quả giảm nhiệt/ẩm thực tế**; không suy diễn mức khớp teacher thành bảo đảm đúng mọi lần điều khiển.
-
-## Tái huấn luyện bộ mẫu
-
-Dùng Python >= 3.12 với các phiên bản trong `requirements.txt`, trong môi trường ảo riêng:
+From the repository root, use Python 3.12 and the pinned CPU environment. The replay runs the desktop TFLite reference interpreter and checks all three proposals plus a below-gate stationary trace. Different integer-kernel rounding paths can move a score or a near-boundary decision. Use the vendored Micro replay for the firmware-kernel result and observe the live score on the board.
 
 ```bash
-python3.12 -m venv /tmp/iot-fan-ml
-/tmp/iot-fan-ml/bin/python -m pip install -r ml/requirements.txt
-/tmp/iot-fan-ml/bin/python ml/train_export.py --output-dir /tmp/iot-fan-candidate
+python3.12 -m venv /tmp/fan-ml
+/tmp/fan-ml/bin/python -m pip install -r ml/requirements.txt
+/tmp/fan-ml/bin/python ml/replay.py
 ```
 
-Chạy từ gốc repository. `--output-dir` là gốc để xuất các nhánh `ml/` và `firmware/include/`; mặc định là repository hiện tại. Nên tạo candidate riêng rồi xem manifest trước khi thay mô hình đang dùng. `--seed 42 --epochs 100 --synthetic-samples 24000` là cấu hình mặc định; 12.000 mẫu gần ngưỡng được bổ sung trước khi loại trùng. Seed, phiên bản thư viện, cấu trúc, cách chia dữ liệu và hash được lưu trong manifest. Byte huấn luyện không được cam kết giống nhau giữa các nền tảng/phiên bản thư viện.
+The desktop reference reports ON 255/256 on the rising trace, OFF 246/256 on the falling trace and HOLD 255/256 on the steady trace. At seven identical 27°C / 74.8% RH readings it proposes HOLD with a peak of 141/256, below the gate.
 
-Pipeline chia mẫu tổng hợp duy nhất thành train/validation/test theo từng lớp, xấp xỉ 70/15/15. Validation chọn epoch theo loss; test không dùng huấn luyện hoặc chọn epoch. Mạng `2 → 32 → 16 → 3` được chuẩn hóa lúc huấn luyện rồi gộp phép chuẩn hóa vào lớp đầu: **firmware đưa vào giá trị °C và %RH gốc**. Pipeline kiểm tra schema, kích thước/dtype, chỉ cho FULLY_CONNECTED/SOFTMAX v1, đối chiếu mọi mẫu validation/test giữa Keras và TFLite, kiểm tra xác suất hữu hạn và tổng bằng 1, đồng thời báo riêng 36 điểm sát ngưỡng.
+All three comparison windows end at 28.5°C / 71% RH with the fan initially OFF and every sample below the ON thresholds. Inspect the rising, falling and steady outputs and the exact samples in the JSON. SHADOW lets you watch the same forecasts while the saved hysteresis rule controls the GPIO. In AI mode the profile, sample identity, status, score and dwell checks govern actuation. The observed agreement percentage on the device compares the model with the **current** fixed static rule. A correct early forecast can reduce that percentage.
 
-Các đầu ra đi cùng nhau:
-
-- `ml/data/dataset.csv`: dữ liệu thực sự đưa vào huấn luyện, nhãn và phân vùng.
-- `ml/models/dht_fan_model.tflite`: mô hình float32.
-- `ml/models/fan_model_manifest.json`: nguồn dữ liệu, hash, confusion matrix, recall từng lớp, baseline, kiểm tra chuyển đổi và giới hạn xác nhận.
-- `firmware/include/dht_fan_model.h`: byte mô hình `fan_model_tflite`, căn 16 byte.
-- `firmware/include/fan_model_metadata.h`: phiên bản, hash, profile và miền đầu vào.
-
-Không trộn model/header/metadata từ những lần xuất khác nhau. Sau khi thay mô hình phải build firmware, chạy thử thiết bị và đối chiếu Serial/telemetry. `hardware_validated=false` và `real_environment_efficacy_validated=false` trong manifest phản ánh phạm vi xác nhận, không phải lỗi pipeline.
-
-Manifest báo cả độ phủ và số lỗi trong nhóm `max(softmax) >= 0.8`, riêng cho validation/test và 36 điểm sát ngưỡng. Đây chỉ là kiểm tra bộ lọc softmax; vẫn có thể tồn tại đề xuất sai dù qua ngưỡng 0.8. Không suy diễn độ chính xác có điều kiện thành bảo đảm đúng cho từng lần điều khiển.
-
-`--model-version` đặt tên gốc tối đa 51 ký tự ASCII. Phiên bản được xuất luôn thêm 12 ký tự đầu SHA256 của byte mô hình, chẳng hạn `fan-policy-v1-bec2aad20791`, để phân biệt các lần huấn luyện khác nhau trên telemetry. Nếu đối số đã có hậu tố `-` và 12 ký tự hex thì hậu tố được thay bằng hash hiện tại; không nối lặp. Manifest giữ SHA256 đầy đủ để đối chiếu chính xác.
-
-## Thu dữ liệu thật và gán nhãn
-
-Xuất lịch sử thiết bị từ dashboard admin thành JSONL. Hoặc lưu các trang `/admin/api/history` thành JSON có `rows`. Công cụ chỉ đọc file cục bộ, không lưu thông tin đăng nhập:
+For the exact vendored Micro inference kernels, build the firmware replay on a host with CMake and a C++20 compiler. The evaluator needs Python 3.10+ and uses the standard library. The model training, desktop replay and history import commands in this guide use the Python 3.12 ML environment.
 
 ```bash
-python3 ml/import_history.py /tmp/history.jsonl --output /tmp/fan-unlabeled.csv
+cmake -S tools/replay -B /tmp/fan-replay -DCMAKE_BUILD_TYPE=Release
+cmake --build /tmp/fan-replay --parallel 2
+/tmp/fan-replay/fan_replay
+python3 tools/replay/evaluate.py /tmp/fan-replay/fan_replay
 ```
 
-Có thể truyền nhiều file đầu vào. Mỗi mẫu được nhận dạng bằng `device_id + boot_id + sample_seq`; các bản tin sensor/fan/ai trùng mẫu được gộp, ưu tiên bản ghi có AI ready. Hai bản ghi cùng nhận dạng nhưng khác T/RH gây lỗi thay vì âm thầm chọn một. Bản ghi không có T/RH hữu hạn trong miền được bỏ qua và đếm rõ trong báo cáo. Bản ghi có T/RH nhưng thiếu nhận dạng phiên/mẫu gây lỗi vì không thể tách phiên đáng tin cậy. Phiên mặc định là `device_id:boot_id`, với từng thành phần được percent-encode để dấu hai chấm trong ID không gây trùng phiên.
+On the same test CSV the vendored Micro kernels scored **3,151/3,600 (87.53%)** versus **3,142/3,600 (87.28%)** for the desktop TFLite reference. The static and OLS baselines scored 2,557 and 2,986 respectively. Micro accepted 2,771 forecasts at the 0.80 gate, with 2,632 correct. Among the eligible early-start opportunities it found 91 true positives, 12 false positives and 54 missed crossings before dwell enforcement. For the 27°C / 74.8% RH low-score fixture, Micro returned HOLD 134/256. Both runtimes trigger the low-score fallback on this fixture. The HIL guide gives expected settings, Serial evidence and physical steps. [Bàn thử và sáu kịch bản HIL](HIL.vi.md)
 
-Khi cơ sở dữ liệu chứa lịch sử trước bản nâng cấp, hãy lọc thời gian xuất từ lúc firmware mới bắt đầu gửi `boot_id/sample_seq`. Công cụ chủ động từ chối các dòng số đo cũ thiếu nhận dạng thay vì tự dựng phiên giả. Bản ghi `status=ready` chỉ được ưu tiên nếu `ai.sample_seq` khớp mẫu đang gộp.
-
-Báo cáo importer đếm khoảng trống `sample_seq` giữa ID đầu/cuối còn giữ của mỗi phiên. Đây là số ID thiếu trong phạm vi quan sát, không khẳng định mất do mạng hay chứng minh dữ liệu đầy đủ: bộ lọc, giới hạn xuất và hàng đợi telemetry đều có thể làm thiếu mẫu. Công cụ không nội suy. Các khoảng trống phải được giữ riêng khi xây dựng cửa sổ dự báo tương lai; không nối qua chúng như chuỗi đo liên tục. CSV giữ `device_id`, `boot_id`, `sample_seq` và thời điểm lấy mẫu để kiểm tra lại.
-
-CSV xuất mặc định có `label` trống và `label_source=unlabeled`. Người gán nhãn cần điền **OFF, HOLD hoặc ON** theo quy trình đã định và đổi `label_source` thành **operator**; giữ `session_id`. Không dùng dự đoán AI làm nhãn. `fan_state` là trạng thái relay được báo khi phát bản tin, có thể thuộc quyết định từ mẫu trước; chưa phải số đo quạt quay hoặc hiệu quả làm mát. Các cột `fan_decision_sample_seq` và `fan_decided_uptime_ms` giữ lại ngữ cảnh quyết định nếu bản tin có cung cấp. Những cột phụ không tự biến thành đặc trưng đầu vào hay nhãn mục tiêu.
+## Train and evaluate
 
 ```bash
-/tmp/iot-fan-ml/bin/python ml/train_export.py \
-  --csv /tmp/fan-labeled.csv --label-source operator \
-  --model-version fan-operator-v1 --output-dir /tmp/fan-operator-candidate
+/tmp/fan-ml/bin/python ml/train_export.py --output-dir /tmp/fan-model-candidate
 ```
 
-Dữ liệu CSV cần ít nhất 30 mẫu, ít nhất ba phiên độc lập và đủ ba lớp trong mỗi phần train/validation/test. Pipeline chia nguyên phiên theo seed, không chia ngẫu nhiên từng dòng thời gian. Nếu nhiều lần boot vẫn thuộc cùng một phiên thí nghiệm liên tục, người chuẩn bị dữ liệu phải gộp chúng về cùng `session_id` trước khi huấn luyện để tránh rò rỉ ngữ cảnh. Nhãn operator chỉ chứng minh khả năng bắt chước lựa chọn người gán, chưa chứng minh tối ưu điện năng/vi khí hậu.
+The default generator creates 24,000 independent synthetic episodes with steady conditions, ramps, smooth peaks and short disturbances. Each episode has one randomly jittered history and a six-step continuation in five-second intervals. Future labels are assigned from the final simulated readings. The simulator draws a variable reduction under an active fan command. This assumption needs validation on the specific enclosure. The synthetic CSV includes inputs in physical units, the OLS slopes, the simulated T/RH outcome and the label. Only the eight explicit feature columns enter the network.
 
-Để thử quy trình bằng số đo thật nhưng nhãn do luật tạo, phải khai báo rõ:
+Seed 42 and the episode IDs fix the 70% training, 15% validation and 15% test split. Training selects weights by validation loss. Calibration uses training rows. The held-out test has 3,600 independent episodes. The comparison baselines use the current reading (static policy) and a 30-second linear extrapolation from the two raw OLS rates. Per-class recall, confusion matrices, coverage at the score gate, accuracy on accepted samples and false early alerts are available in the manifest. These measurements describe the simulator. Environmental control benefit needs separate trials with the fan and enclosure.
+
+On the 3,600 synthetic test episodes the desktop INT8 reference predicted the future class correctly in 87.28% of cases. The static baseline reached 71.03% and linear extrapolation reached 82.94%. The score gate accepted 2,769 windows (76.92%) with 95.02% accuracy among those accepted. For the 587 windows already inside the hysteresis band with a sampled OFF command, 145 later reached ON. The score gate proposed 101 early starts, of which 90 reached ON and 11 did not. It missed 55 crossings (89.11% precision, 62.07% recall). Single-decision episodes do not supply dwell history. These counts measure opportunities before dwell enforcement.
+
+Two exports in the pinned CPU environment produced byte-identical model binaries, datasets and firmware headers. Each export writes a feature CSV, the TFLite flatbuffer, the evaluation manifest, the aligned firmware byte array and the firmware metadata header under the chosen output root. Use the headers and binary from the same export. The model identifier embeds the first 12 hexadecimal digits of the binary's SHA-256. The manifest also records the full binary and dataset hashes, software versions and split sizes. [Shipped manifest](models/fan_model_manifest.json)
+
+## Use recorded sessions
+
+Export admin history as JSON, JSONL or a JSON object containing a `rows` array. The importer accepts overlapping pages and deduplicates readings by device, boot and sample sequence. It reconstructs windows only within contiguous sequences, using the saved sample uptime. It obtains the predecision fan command from `ai.fan_on_at_sample` on the matching inference record. Older rows without the field can supply past T/RH history but cannot serve as a labeled decision endpoint.
 
 ```bash
-python3 ml/import_history.py /tmp/history.jsonl \
-  --label-source synthetic-policy --output /tmp/fan-policy-labeled.csv
-/tmp/iot-fan-ml/bin/python ml/train_export.py \
-  --csv /tmp/fan-policy-labeled.csv --label-source synthetic-policy \
-  --model-version fan-recorded-policy-v1 --output-dir /tmp/fan-recorded-candidate
+/tmp/fan-ml/bin/python ml/import_history.py session*.json --label-source observed-future --output /tmp/fan-observed.csv
+/tmp/fan-ml/bin/python ml/train_export.py --csv /tmp/fan-observed.csv --label-source observed-future --output-dir /tmp/fan-observed-candidate
 ```
 
-Pipeline kiểm tra mọi nhãn `synthetic-policy` đúng với luật. Nguồn mẫu là recorded-csv nhưng nguồn nhãn vẫn synthetic-policy; không trình bày chúng là kết quả hiệu quả thực nghiệm. File output importer đã tồn tại bị từ chối để bảo toàn công gán nhãn.
+For observed outcomes, each endpoint needs another 30 seconds of uninterrupted valid readings with the same sampled command throughout. If a reading straddles the horizon, the importer linearly interpolates between the neighboring observations. A gap, unknown command or observed switch excludes that target. This checks the command at sample times. Short changes between readings may go undetected. For a controlled trial, hold the relay command fixed and log any intervention. Sparse backend history can be insufficient for training. The import summary reports the resulting window count.
 
-## Đánh giá tiếp theo
-
-Quan sát SHADOW trước khi bật AI; kiểm tra tình huống gần ngưỡng, cảm biến lỗi/cũ, ngoài miền, khởi động lại và chế độ MANUAL. So sánh luật với AI trên các phiên thử giữ riêng. Đo số lần bật/tắt sai, thời gian phản ứng, số lần đóng relay và thời lượng quạt chạy; chỉ kết luận giảm nhiệt/ẩm nếu bố trí thí nghiệm có đối chứng và số đo chứng minh. Dự báo 1–5 phút là bước tiếp theo cần lịch sử T/RH/quạt, thiết kế nhãn tương lai và chia phiên/thời gian; phiên bản hiện tại chưa triển khai dự báo.
+Omit `--label-source` on import to prepare unlabeled inputs for operator review. Enter OFF/HOLD/ON and mark each reviewed row `label_source=operator`. On training, supply the matching label source. The split keeps each device/boot session together so overlapping windows cannot span training and evaluation. Use enough independent sessions for every split to contain all three classes and keep repeated measurements of a single physical exercise within one experimental partition.

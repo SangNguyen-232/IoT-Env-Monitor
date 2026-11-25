@@ -1,33 +1,19 @@
-"""Convert saved admin history JSON/JSONL into session-aware labeling CSV.
-
-Default labels are blank: fill OFF/HOLD/ON and set label_source=operator after
-an actual labeling review. --label-source synthetic-policy deliberately copies
-the fixed teaching rule; it is never evidence of observed fan effectiveness.
-No credentials/network are used, and model predictions are never labels.
-"""
+"""Convert saved admin history to 7-sample inputs and optional +30 s outcome labels."""
 from __future__ import annotations
 
 import argparse
+import bisect
 import csv
 import json
-import math
 from pathlib import Path
 import re
-import struct
 import sys
 from urllib.parse import quote
 
-# Keep this utility usable without NumPy/TensorFlow installed. Values mirror the
-# generated fan_model_metadata.h profile and train_export.py.
-LABELS = ("OFF", "HOLD", "ON")
+import numpy as np
 
-
-def policy_label(temperature: float, humidity: float) -> str:
-    if temperature >= 30.0 or humidity >= 75.0:
-        return "ON"
-    if temperature <= 28.0 and humidity <= 70.0:
-        return "OFF"
-    return "HOLD"
+from trend_features import (LABELS, FEATURE_NAMES, HORIZON_SECONDS, WINDOW_SIZE, MAX_STEP_GAP_MS,
+                            T_MIN, T_MAX, H_MIN, H_MAX, extract_window_features, band_label)
 
 
 def read_rows(path: Path) -> list[dict]:
@@ -59,82 +45,139 @@ def scalar_identity(value, field: str) -> str:
     return result
 
 
-def convert(rows: list[dict], label_source: str) -> tuple[list[dict], dict]:
-    samples, skipped_invalid_sensor, duplicate_rows = {}, 0, 0
-    for index, row in enumerate(rows, 1):
-        # A sensor-null row is a valid status event but not a training sample.
-        temperature, humidity = row.get("temperature"), row.get("humidity")
-        if (isinstance(temperature, bool) or isinstance(humidity, bool)
-                or not isinstance(temperature, (int, float)) or not isinstance(humidity, (int, float))
-                or not math.isfinite(temperature) or not math.isfinite(humidity)
-                or not 5.0 <= temperature <= 50.0 or not 20.0 <= humidity <= 100.0):
-            skipped_invalid_sensor += 1
+def parse_uint32(value, field: str, minimum: int = 0) -> int:
+    if isinstance(value, str) and re.fullmatch(r"0|[1-9][0-9]{0,9}", value):
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= 4294967295:
+        raise ValueError(f"{field} must be an integer in [{minimum},4294967295]")
+    return value
+
+
+
+def sampled_fan(row):
+    # FAN_state is transmitted after actuation. Only this field identifies the
+    # command sampled with the DHT input, including when the decision changed it.
+    ai = row.get("ai")
+    if (isinstance(ai, dict) and ai.get("status") == "ready"
+            and str(ai.get("sample_seq")) == str(row.get("sample_seq"))
+            and str(ai.get("sampled_uptime_ms")) == str(row.get("sampled_uptime_ms"))
+            and isinstance(ai.get("fan_on_at_sample"), bool)):
+        return ai["fan_on_at_sample"]
+    return None
+
+
+def continuous_runs(samples):
+    run, times = [], []
+    for seq, row in samples:
+        now = row["_ms"]
+        if run:
+            prev_seq, previous = run[-1]
+            gap = (now - previous["_ms"]) & 0xffffffff
+            if seq != (1 if prev_seq == 0xffffffff else prev_seq + 1) or not 0 < gap <= MAX_STEP_GAP_MS:
+                yield run, times
+                run, times = [], []
+        times.append(times[-1] + gap if times else 0)
+        run.append((seq, row))
+    if run:
+        yield run, times
+
+
+def future_observation(rows, times, i, fan):
+    """Interpolate the horizon between consecutive samples under the same observed command."""
+    target = times[i] + HORIZON_SECONDS * 1000
+    j = bisect.bisect_left(times, target, lo=i + 1)
+    if j == len(times) or any(sampled_fan(rows[k][1]) != fan for k in range(i + 1, j + 1)):
+        return None
+    before, after = rows[j - 1][1], rows[j][1]
+    w = (target - times[j - 1]) / (times[j] - times[j - 1])
+    return tuple(before[key] + w * (after[key] - before[key]) for key in ("temperature", "humidity"))
+
+
+def convert(rows: list[dict], label_source: str):
+    samples = {}
+    skipped_invalid = duplicates = 0
+    for i, row in enumerate(rows, 1):
+        t, h = row.get("temperature"), row.get("humidity")
+        if (type(t) not in (int, float) or type(h) not in (int, float)
+                or not T_MIN <= t <= T_MAX or not H_MIN <= h <= H_MAX):
+            skipped_invalid += 1
             continue
         try:
             device = scalar_identity(row.get("device_id"), "device_id")
             boot = scalar_identity(row.get("boot_id"), "boot_id")
-            sequence = row.get("sample_seq")
-            # PostgreSQL bigint columns are commonly serialized as decimal strings.
-            if isinstance(sequence, str) and re.fullmatch(r"[1-9][0-9]{0,9}", sequence):
-                sequence = int(sequence)
-            if isinstance(sequence, bool) or not isinstance(sequence, int) or not 1 <= sequence <= 4294967295:
-                raise ValueError("sample_seq must be an integer in [1,4294967295]")
+            seq = parse_uint32(row.get("sample_seq"), "sample_seq", minimum=1)
+            ms = parse_uint32(row.get("sampled_uptime_ms"), "sampled_uptime_ms")
         except ValueError as error:
-            raise ValueError(f"history row {index}: {error}") from error
-        key = (device, boot, sequence)
-        previous = samples.get(key)
-        if previous is not None:
-            duplicate_rows += 1
-            if (temperature, humidity) != (previous["temperature"], previous["humidity"]):
-                raise ValueError(f"Inconsistent readings for duplicated sample {key}")
-            old_ai, new_ai = previous.get("ai"), row.get("ai")
-            old_ready = (isinstance(old_ai, dict) and old_ai.get("status") == "ready"
-                         and str(old_ai.get("sample_seq")) == str(sequence))
-            new_ready = (isinstance(new_ai, dict) and new_ai.get("status") == "ready"
-                         and str(new_ai.get("sample_seq")) == str(sequence))
-            if old_ready and not new_ready:
+            raise ValueError(f"history row {i}: {error}") from error
+        key = device, boot, seq
+        old = samples.get(key)
+        if old is not None:
+            duplicates += 1
+            if (t, h, ms) != (old["temperature"], old["humidity"], old["_ms"]):
+                raise ValueError(f"Conflicting readings for {key}")
+            old_fan, new_fan = sampled_fan(old), sampled_fan(row)
+            if old_fan is not None and new_fan is not None and old_fan != new_fan:
+                raise ValueError(f"Conflicting sampled fan command for {key}")
+            if old_fan is not None:
                 continue
-        samples[key] = row
+        samples[key] = {**row, "_ms": ms}
+
+    grouped = {}
+    for (device, boot, seq), row in sorted(samples.items()):
+        grouped.setdefault((device, boot), []).append((seq, row))
+
     output = []
-    for (device, boot, sequence), row in sorted(samples.items(), key=lambda item: item[0]):
-        # Match training/deployed float32 before applying threshold labels.
-        temperature, humidity = (struct.unpack("<f", struct.pack("<f", row[name]))[0]
-                                 for name in ("temperature", "humidity"))
-        output.append({
-            "temperature": temperature, "humidity": humidity,
-            "label": policy_label(temperature, humidity) if label_source == "synthetic-policy" else "",
-            "session_id": f"{quote(device, safe='')}:{quote(boot, safe='')}", "label_source": label_source,
-            "device_id": device, "boot_id": boot,
-            "sample_seq": sequence, "sampled_uptime_ms": row.get("sampled_uptime_ms", ""),
-            "timestamp_real": row.get("timestamp_real") or "", "fan_state": row.get("FAN_state", ""),
-            "mode_state": row.get("MODE_state", ""),
-            "fan_decision_sample_seq": row.get("fan_decision_sample_seq", ""),
-            "fan_decided_uptime_ms": row.get("fan_decided_uptime_ms", ""),
-        })
+    gaps = missing_command = missing_future = 0
+    for (device, boot), sequence in grouped.items():
+        session = f"{quote(device, safe='')}:{quote(boot, safe='')}"
+        for run_idx, (run, times) in enumerate(continuous_runs(sequence)):
+            gaps += int(run_idx > 0)
+            for i in range(WINDOW_SIZE - 1, len(run)):
+                seq, row = run[i]
+                fan = sampled_fan(row)
+                if fan is None:
+                    missing_command += 1
+                    continue
+                future = None
+                if label_source == "observed-future":
+                    future = future_observation(run, times, i, fan)
+                    if future is None:
+                        missing_future += 1
+                        continue
+                start = i + 1 - WINDOW_SIZE
+                history = [sample for _, sample in run[start:i + 1]]
+                ts = np.array(times[start:i + 1]) / 1000
+                readings = np.array([[s["temperature"], s["humidity"]] for s in history], dtype=np.float32)
+                feats = extract_window_features(readings[:, 0], readings[:, 1], ts, fan)
+                centered = ts - ts.mean()
+                slopes = centered @ readings / (centered @ centered) * 60
+                output.append({
+                    **dict(zip(FEATURE_NAMES, map(float, feats))),
+                    "temperature": row["temperature"], "humidity": row["humidity"],
+                    "temp_slope_c_min": slopes[0], "humi_slope_pct_min": slopes[1],
+                    "label": LABELS[int(band_label(*future))] if future else "",
+                    "future_temperature_c": future[0] if future else "",
+                    "future_humidity_percent": future[1] if future else "",
+                    "session_id": session, "sample_seq": seq, "sampled_uptime_ms": row["_ms"],
+                    "timestamp_real": row.get("timestamp_real") or "", "label_source": label_source,
+                })
     if not output:
-        raise ValueError("No valid in-domain identified DHT samples were found")
-    session_sequences = {}
-    for row in output:
-        session_sequences.setdefault(row["session_id"], []).append(row["sample_seq"])
-    coverage = []
-    for session, sequences in session_sequences.items():
-        first, last = min(sequences), max(sequences)
-        coverage.append({"session_id": session, "first_sequence": first, "last_sequence": last,
-                         "retained_samples": len(sequences),
-                         "missing_sequence_ids_within_observed_span": last - first + 1 - len(sequences)})
-    return output, {"input_rows": len(rows), "output_samples": len(output), "duplicate_rows": duplicate_rows,
-                    "skipped_invalid_or_out_of_domain_sensor_rows": skipped_invalid_sensor,
-                    "sessions": len(session_sequences), "label_source": label_source,
-                    "sequence_coverage": coverage,
-                    "missing_sequence_ids_within_observed_spans": sum(item["missing_sequence_ids_within_observed_span"] for item in coverage),
-                    "coverage_limit": "Counts gaps only between first/last retained IDs; filtered readings, export limits and dropped events can all produce gaps. Capture completeness is not established; no interpolation is performed."}
+        raise ValueError("No complete usable windows. Export contiguous 5 s samples with ai.fan_on_at_sample. "
+                         "Observed-future labels also require contiguous follow-up under the same sampled fan command.")
+    return output, {
+        "input_rows": len(rows), "unique_in_domain_samples": len(samples), "windows": len(output),
+        "duplicate_rows": duplicates, "invalid_or_out_of_domain_rows": skipped_invalid,
+        "gap_resets": gaps, "windows_missing_sampled_command": missing_command,
+        "windows_missing_contiguous_same_command_future": missing_future,
+        "sessions": len(grouped), "label_source": label_source,
+    }
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("inputs", type=Path, nargs="+", help="Saved JSON pages or JSONL exports")
     parser.add_argument("--output", type=Path, required=True)
-    parser.add_argument("--label-source", choices=("unlabeled", "synthetic-policy"), default="unlabeled")
+    parser.add_argument("--label-source", choices=("unlabeled", "observed-future"), default="unlabeled")
     args = parser.parse_args()
     if args.output.resolve() in {path.resolve() for path in args.inputs}:
         parser.error("output must not overwrite an input file")
@@ -143,7 +186,6 @@ def main() -> int:
     rows = [row for path in args.inputs for row in read_rows(path)]
     converted, report = convert(rows, args.label_source)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    # Exclusive creation prevents overwriting a concurrently prepared labeling file.
     with args.output.open("x", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=list(converted[0]), lineterminator="\n")
         writer.writeheader()

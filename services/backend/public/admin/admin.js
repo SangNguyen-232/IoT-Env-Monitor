@@ -298,8 +298,9 @@
   }
 
   function aiStatusLabel(status) {
-    return ({ ready: "Có kết quả", loading: "Đang tải", sensor_invalid: "Cảm biến lỗi",
-      out_of_domain: "Ngoài miền mô hình", inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
+    return ({ ready: "Sẵn sàng", warming_up: "Đang nạp cửa sổ", loading: "Đang khởi tạo",
+      sensor_invalid: "Cảm biến lỗi", out_of_domain: "Ngoài miền mô hình",
+      inference_error: "Lỗi suy luận", model_error: "Lỗi mô hình",
       stale: "Kết quả quá hạn" })[status] || "Chưa có dữ liệu AI";
   }
 
@@ -330,7 +331,7 @@
   function renderAILab(device) {
     var ai = device.ai && typeof device.ai === "object" ? device.ai : null;
     var fresh = aiSnapshotFresh(device);
-    var status = !fresh ? "stale" : ai && ai.status;
+    var status = ai && (fresh ? ai.status : "stale");
     if (status === "ready" && !aiMatchesSample(device)) status = "stale";
     var ready = ai && status === "ready";
     var proposal = ready ? aiClass(ai.predicted_class) : "—";
@@ -341,17 +342,30 @@
     var probs = ready && Array.isArray(ai.probabilities) && ai.probabilities.length === 3 && ai.probabilities.every(function (p) {
       return typeof p === "number" && Number.isFinite(p) && p >= 0 && p <= 1;
     }) ? ai.probabilities.map(function (p) { return (p * 100).toFixed(1) + "%"; }).join(" / ") : "—";
+    var hasSlopes = ready && typeof ai.temp_slope_c_min === "number" && Number.isFinite(ai.temp_slope_c_min) &&
+      typeof ai.humi_slope_pct_min === "number" && Number.isFinite(ai.humi_slope_pct_min);
+    var predictive = ai && Number.isInteger(ai.window_capacity);
+    var winText = ai && Number.isInteger(ai.window_samples)
+      ? " (" + ai.window_samples + (predictive ? "/" + ai.window_capacity : "") + " mẫu)" : "";
+    var trendText = hasSlopes
+      ? ((ai.temp_slope_c_min >= 0 ? "+" : "") + ai.temp_slope_c_min.toFixed(2) + "°C/p · " +
+         (ai.humi_slope_pct_min >= 0 ? "+" : "") + ai.humi_slope_pct_min.toFixed(2) + "%RH/phút" + winText +
+         (typeof ai.residual_jitter === "number" ? " · độ dao động chuẩn hóa " + ai.residual_jitter.toFixed(3) : "") +
+         (typeof ai.fan_on_at_sample === "boolean" ? " · GPIO lúc lấy mẫu " + (ai.fan_on_at_sample ? "ON" : "OFF") : ""))
+      : (status === "warming_up" && winText ? "Đang nạp" + winText : "—");
     var mode = ["AUTO", "SHADOW", "AI", "MANUAL"].indexOf(device.MODE_state) >= 0 ? device.MODE_state : "—";
     var fan = device.FAN_state === "ON" || device.FAN_state === "OFF" ? device.FAN_state : "—";
     return '<div class="device-ai">' +
-      '<div class="device-ai-heading"><strong>TinyML</strong><span class="js-ai-status">' + escapeHtml(aiStatusLabel(status)) + '</span></div>' +
-      '<p>AI: <strong class="js-ai-proposal">' + proposal + '</strong> · Luật lab tham chiếu: <span class="js-ai-teacher">' + teacher + '</span></p>' +
-      '<p>Mức khớp với luật: ' + escapeHtml(agreement) + '</p>' +
+      '<div class="device-ai-heading"><strong>' + (predictive ? 'TinyML INT8' : 'TinyML') + '</strong><span class="js-ai-status">' + escapeHtml(aiStatusLabel(status)) + '</span></div>' +
+      '<p>AI · <strong class="js-ai-proposal">' + proposal + '</strong> · ' + (predictive ? 'Luật ngưỡng tức thời (hồ sơ chuẩn)' : 'Luật tham chiếu') + ' · <span class="js-ai-teacher">' + teacher + '</span></p>' +
+      '<p>Xu hướng: <span class="js-ai-trend">' + escapeHtml(trendText) + '</span></p>' +
+      '<p>Mức khớp tham chiếu: ' + escapeHtml(agreement) + '</p>' +
       '<p class="ai-probabilities">Softmax OFF / HOLD / ON: <span class="js-ai-probabilities">' + escapeHtml(probs) + '</span></p>' +
       '<p>Mô hình: ' + escapeHtml(ai && ai.model_version || '—') + '</p>' +
       '<p>Quạt / chế độ <span class="js-fan-freshness">' + (fresh ? '(lần nhận mới nhất)' : '(dữ liệu cũ)') + '</span>: <strong>' + escapeHtml(fan) + ' / ' + escapeHtml(mode) + '</strong></p>' +
       '<p>Lý do: ' + escapeHtml(device.fan_reason || '—') + '</p>' +
-      '<p class="lab-sample">Phiên ' + escapeHtml(device.boot_id || '—') + ' · mẫu ' + escapeHtml(device.sample_seq == null ? '—' : device.sample_seq) + '</p>' +
+      '<p class="lab-sample">Phiên ' + escapeHtml(device.boot_id || '—') + ' · mẫu DHT20 ' + escapeHtml(device.sample_seq == null ? '—' : device.sample_seq) +
+      ' · mẫu điều khiển ' + escapeHtml(device.fan_decision_sample_seq == null ? '—' : device.fan_decision_sample_seq) + '</p>' +
       (!ai && device.Score != null ? '<p class="lab-legacy">Bản ghi cũ: Score thuộc mô hình rủi ro trước đây, không được dùng làm mức khớp điều khiển quạt.</p>' : '') +
       '</div>';
   }
@@ -599,6 +613,7 @@
           card.querySelector(".js-ai-status").textContent = "Kết quả quá hạn";
           card.querySelector(".js-ai-proposal").textContent = "—";
           card.querySelector(".js-ai-teacher").textContent = "—";
+          if (card.querySelector(".js-ai-trend")) card.querySelector(".js-ai-trend").textContent = "—";
           card.querySelector(".js-ai-probabilities").textContent = "—";
           card.querySelector(".js-fan-freshness").textContent = "(dữ liệu cũ)";
         }

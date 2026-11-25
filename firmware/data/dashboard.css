@@ -365,7 +365,7 @@ html, body {
 
 .btn-toggle:hover { background: #4f7df5; }
 .btn-toggle:active { transform: translateY(1px); }
-.btn-toggle:disabled { opacity: 0.6; cursor: wait; }
+.btn-toggle:disabled { opacity: 0.5; cursor: not-allowed; }
 
 .control-status {
   margin: 8px 0 0;
@@ -442,7 +442,6 @@ html, body {
 #modeSelect { min-width: 0; max-width: 100%; flex: 1 1 180px; padding: 9px; color: var(--text); background: var(--card-soft); border: 1px solid var(--border); border-radius: 8px; }
 .badge-mode.ai { color: var(--c-humi); }
 .badge-mode.shadow { color: var(--c-temp); }
-.btn-toggle:disabled { opacity: .5; cursor: not-allowed; }
 @media (max-width: 720px) {
   .ai-grid { grid-template-columns: 1fr; gap: 14px; }
   .ai-grid strong { font-size: 16px; }
@@ -460,12 +459,15 @@ html, body {
   .app { flex-direction: column; }
   .sidebar {
     width: 100%;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
   }
-  .nav { flex-direction: row; }
+  .nav { flex-direction: column; }
+  .settings-subnav { margin-left: 28px; }
+  .topbar h1 { overflow-wrap: anywhere; }
   .content { padding: 18px; }
+  .wifi-settings-form input { font-size: 16px; }
 }
 
 /* ---------- WiFi settings form ---------- */
@@ -538,13 +540,9 @@ html, body {
   .btn-toggle { min-height: 40px; }
 }
 
-@media (max-width: 720px) {
-  .wifi-settings-form input { font-size: 16px; }
-}
-
-/* Show only sidebar icons on small phones to prevent horizontal overflow. */
+/* Compact typography and single-column form grid on narrow phones. */
 @media (max-width: 480px) {
-  .brand-name, .nav-item span { display: none; }
+  .brand-name { display: none; }
   .nav-item { padding: 10px; }
   .stat-value, .stat-sub { font-size: 18px; }
   .fan-config-grid { grid-template-columns: 1fr; }
@@ -571,10 +569,3 @@ html, body {
 .wifi-network-row button { flex-shrink: 0; }
 .wifi-settings-form input { min-width: 0; width: 100%; }
 #tinymlView .ai-card { margin-bottom: 0; }
-@media (max-width: 720px) {
-  .sidebar { flex-direction: column; align-items: stretch; gap: 14px; }
-  .nav { flex-direction: column; }
-  .sidebar .nav-item span { display: inline; }
-  .settings-subnav { margin-left: 28px; }
-  .topbar h1 { overflow-wrap: anywhere; }
-}

@@ -15,13 +15,13 @@ void startAP()
     WiFi.mode(WIFI_AP);
     WiFi.softAPConfig(AP_IP, AP_IP, AP_NETMASK);
     WiFi.softAP(String(SSID_AP), String(PASS_AP));
-    Serial.print("Địa chỉ IP chế độ AP Mode: ");
+    Serial.print("AP Mode IP address: ");
     Serial.println(WiFi.softAPIP());
 
     dnsServer.setErrorReplyCode(DNSReplyCode::NoError);
     dnsServer.start(53, "*", AP_IP);
     dns_running = true;
-    Serial.println("Captive Portal: DNS Server đã kích hoạt trên cổng 53");
+    Serial.println("Captive Portal: DNS server started on port 53");
 }
 
 void DNS_process()
@@ -36,7 +36,7 @@ bool startSTA()
 {
     if (wifi_ssid.isEmpty())
     {
-        Serial.println("STA: SSID trống, bỏ qua kết nối.");
+        Serial.println("STA: empty SSID, skipping connection.");
         return false;
     }
 
@@ -55,7 +55,7 @@ bool startSTA()
 
     if (WiFi.status() != WL_CONNECTED)
     {
-        Serial.println("STA: kết nối thất bại, giữ task loop.");
+        Serial.println("STA: connection timed out, keeping runtime loop.");
         return false;
     }
 
@@ -63,10 +63,10 @@ bool startSTA()
     {
         dnsServer.stop();
         dns_running = false;
-        Serial.println("Captive Portal: Đã dừng DNS Server sau khi vào STA");
+        Serial.println("Captive Portal: DNS server stopped after STA connection");
     }
 
-    Serial.print("Địa chỉ IP chế độ STA Mode: ");
+    Serial.print("STA Mode IP address: ");
     Serial.println(WiFi.localIP());
 
     Save_sta_ip_File(WiFi.localIP().toString());
@@ -114,7 +114,7 @@ void Wifi_switch_to(const String& ssid, const String& pass) {
         return;
     }
 
-    Serial.println("Chuyển WiFi thất bại, khôi phục mạng trước đó.");
+    Serial.println("Wi-Fi switch failed; restoring previous network.");
     Save_info_NoRestart(prevSsid, prevPass);
     if (!startSTA())
     {

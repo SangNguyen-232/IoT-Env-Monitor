@@ -50,30 +50,30 @@ def try_mount(littlefs_mod, raw: bytes, size_int: int, block_size: int):
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Đọc danh sách Wi-Fi đã lưu từ ESP32 LittleFS về local/device/wifi_info.json"
+        description="Read saved Wi-Fi credentials from ESP32 LittleFS into local/device/wifi_info.json"
     )
-    parser.add_argument("--port", required=True, help="Cổng serial, ví dụ COM7")
+    parser.add_argument("--port", required=True, help="Serial port (e.g., /dev/ttyACM0 or COM7)")
     parser.add_argument(
         "--baud",
         default=DEFAULT_BAUD,
-        help=f"Tốc độ đọc flash (mặc định {DEFAULT_BAUD})",
+        help=f"Flash read baud rate (default: {DEFAULT_BAUD})",
     )
     parser.add_argument(
         "--offset",
         default=DEFAULT_OFFSET,
-        help=f"Địa chỉ partition LittleFS (mặc định {DEFAULT_OFFSET})",
+        help=f"LittleFS partition flash offset (default: {DEFAULT_OFFSET})",
     )
     parser.add_argument(
         "--size",
         default=DEFAULT_SIZE,
-        help=f"Kích thước partition (mặc định {DEFAULT_SIZE})",
+        help=f"LittleFS partition size in bytes (default: {DEFAULT_SIZE})",
     )
     args = parser.parse_args()
 
     try:
         import littlefs
     except ImportError:
-        print("Thiếu thư viện: pip install littlefs-python")
+        print("Missing dependency: pip install -r tools/device/requirements.txt")
         sys.exit(1)
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -108,7 +108,7 @@ def main() -> None:
 
     if fs is None:
         print(
-            "Không thể mount LittleFS image. Kiểm tra lại --offset và --size."
+            "Could not mount LittleFS image. Verify --offset and --size against your partition table."
         )
         sys.exit(1)
 
@@ -117,7 +117,7 @@ def main() -> None:
         with fs.open("/wifi_list.json", "r") as src:
             wifi_list = json.loads(src.read())
     except FileNotFoundError:
-        print("Không tìm thấy danh sách Wi-Fi đã lưu.")
+        print("No saved Wi-Fi list (/wifi_list.json) found on device.")
         fs.unmount()
         os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok=True)
         with open(OUTPUT_PATH, "w", encoding="utf-8") as dst:
@@ -166,7 +166,7 @@ def main() -> None:
     with open(OUTPUT_PATH, "w", encoding="utf-8") as dst:
         dst.write(content)
 
-    print(f"\nĐã lưu thông tin Wi-Fi ở local/device/wifi_info.json")
+    print("\nSaved Wi-Fi information to local/device/wifi_info.json")
 
 if __name__ == "__main__":
     main()
