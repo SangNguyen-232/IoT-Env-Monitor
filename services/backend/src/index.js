@@ -1,3 +1,11 @@
+/**
+ * Express 5 telemetry ingestion, RBAC, HMAC LAN ticket, and central Admin server.
+ * Runs inside the Linux Ubuntu VM (locally during host tests or on internal `3000/tcp`
+ * in `iot_backend`), privately bridged via `iot_cloudflared` (tunnel `iot-env-monitor-sys`,
+ * `1 VPC` route) + Workers VPC (`iot-env-backend`) behind Cloudflare Workers (`*.workers.dev`).
+ * PostgreSQL (`iot_postgres`) stays private on `iot_net` / VM loopback, and ESP32 device
+ * dashboards remain strictly on the local Wi-Fi LAN.
+ */
 const crypto = require('crypto');
 const express = require('express');
 const session = require('express-session');

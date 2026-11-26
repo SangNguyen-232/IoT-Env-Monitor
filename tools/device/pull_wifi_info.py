@@ -1,7 +1,9 @@
-"""Read the saved Wi-Fi list from a Yolo Uno over USB.
+"""Read the saved Wi-Fi list from a Yolo Uno over USB passthrough on the Linux Ubuntu VM.
 
-From the repository root, install tools/device/requirements.txt, close the serial
-monitor and run this command with the port shown by `pio device list`:
+Strictly local workstation utility (never deployed to Docker or Cloudflare). From the
+repository root inside the Linux Ubuntu VM, install tools/device/requirements.txt in a
+venv, close any open serial monitor, verify `/dev/ttyACM0` USB passthrough (`pio device list`,
+user in `dialout` group), and run:
 
     python tools/device/pull_wifi_info.py --port /dev/ttyACM0
 
@@ -9,7 +11,7 @@ The default offset and size match the spiffs entry used for LittleFS in the
 board's default_8MB.csv partition table. For a custom layout, pass its values
 in hexadecimal with --offset and --size. The output at local/device/wifi_info.json
 contains plaintext passwords. A missing /wifi_list.json replaces it with an
-empty array and exits with status 1. See GUIDE.md for setup and storage details.
+empty array and exits with status 1. See GUIDE.md for Ubuntu VM USB setup details.
 """
 
 import argparse

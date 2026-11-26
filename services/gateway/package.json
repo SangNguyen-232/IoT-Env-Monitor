@@ -1,6 +1,7 @@
 {
   "name": "iot-env-monitor-public",
   "version": "0.0.0",
+  "description": "Cloudflare Worker edge gateway (`*.workers.dev`) deployed via Wrangler from the Linux Ubuntu VM, forwarding `/sensor` and Admin UI traffic via Workers VPC (`IOT_BACKEND`) and Cloudflare Tunnel (`1 VPC`) to `iot_backend:3000`.",
   "private": true,
   "scripts": {
     "deploy": "wrangler deploy",

@@ -1,29 +1,60 @@
 # ESP32-S3 Air Monitoring & Fan Control System
 
-A Yolo Uno ESP32-S3 samples air temperature and humidity every five seconds. It displays readings locally, drives a ventilation fan and can forecast which temperature/humidity band will be reached in 30 seconds. A separate soil-moisture input is available for monitoring. The controller runs on the board. A Node.js service and PostgreSQL database add multi-device monitoring and history, with an optional Cloudflare route for remote access.
+A Yolo Uno ESP32-S3 samples air temperature and humidity every five seconds. It displays readings locally, drives a ventilation fan and can forecast which temperature/humidity band will be reached in 30 seconds. A separate soil-moisture input is available for monitoring. Real-time sensing, TinyML inference, relay actuation and the embedded device web server run locally on the board, while a containerized Node.js/Express service and PostgreSQL 18 database inside a **Linux Ubuntu virtual machine** provide multi-device monitoring, RBAC and history—with **only** the Express backend HTTP origin exposed remotely via **Cloudflare Workers + Workers VPC + Cloudflare Tunnel**.
 
-- **Start here** to clone the correct branch, run the backend locally without hardware, build the two ESP32 images and provision the board. [Getting started](GUIDE.md)
-- **Work with sensor data** to interpret the model, train a candidate or import a device's history. [TinyML model and training](ml/README.md)
-- **Verify a physical setup** to compare the requested mode, applied relay command and observed fan response. [Bench guide](ml/HIL.md)
-- **Upgrade an existing installation** to back up the database, apply migrations and read the telemetry export contract. [Database guide](database/MIGRATIONS.md)
+> **Linux Ubuntu VM & Selective Cloudflare Deployment Scope:** All coding, building, execution, TinyML model training, USB firmware flashing, hardware-in-the-loop (HIL) testing, and container/Wrangler orchestration were carried out inside a **Linux Ubuntu virtual machine** (`sang@Linux`, Ubuntu LTS guest VM, branch `project_linux`). **Not the entire project is deployed onto Cloudflare Tunnel**—only the containerized Express backend (`iot_backend:3000`) is bridged privately by `iot_cloudflared` (tunnel `iot-env-monitor-sys`, `1 VPC` route only) to Cloudflare **Workers VPC** (`iot-env-backend`), fronted publicly on `*.workers.dev` by Cloudflare Workers (`services/gateway/`). Firmware, on-device TinyML, the ESP32's LAN dashboard/WebSocket/OTA, PostgreSQL (`127.0.0.1:5433`), offline Python ML training, and USB tools are **not** deployed onto Cloudflare Tunnel.
+
+- **Start here** to set up the Linux Ubuntu VM toolchain, test the backend locally, compile and flash the two ESP32 images over VM USB passthrough, and deploy the Express backend + Cloudflare Worker VPC gateway. [Getting started](GUIDE.md)
+- **Work with sensor data** locally in Python 3.12 on the Linux Ubuntu VM to interpret the model, train and quantize a candidate for ESP32 firmware, or import JSONL history exported from `/admin/`. [TinyML model and training](ml/README.md)
+- **Verify a physical setup** locally over Wi-Fi LAN and Ubuntu VM USB Serial passthrough (`/dev/ttyACM0`), with optional telemetry recording through the Cloudflare Worker VPC gateway. [Bench guide](ml/HIL.md)
+- **Upgrade an existing installation** inside the Linux Ubuntu VM Docker stack (`127.0.0.1:5433` / `iot_postgres`) to back up PostgreSQL 18, apply migrations and read the telemetry export contract. [Database guide](database/MIGRATIONS.md)
+
+## Execution & Deployment Scope
+
+The table below defines what runs locally on the ESP32-S3 hardware/LAN, what runs strictly inside the **Linux Ubuntu virtual machine**, and which specific components are deployed across **Cloudflare Tunnel, Workers VPC, and Cloudflare Workers**:
+
+| Subsystem | Path / Resource | Where It Runs | Exposed via Cloudflare Tunnel / Workers? |
+| :--- | :--- | :--- | :--- |
+| **ESP32-S3 Firmware & TinyML Runtime** | `firmware/src/`, `firmware/include/`, `platformio.ini` | Compiled & flashed via USB (`/dev/ttyACM0`) on the **Linux Ubuntu VM**; executes autonomously **on the ESP32-S3 MCU** | **No** — runs on-device; only sends outbound HTTPS `POST /sensor` requests to the `*.workers.dev` gateway |
+| **Embedded Device Dashboard, `/ws` & OTA** | `firmware/data/`, port `80` (`http://<board-lan-ip>/`, `192.168.4.1`) | Hosted **directly on the ESP32-S3 over local Wi-Fi LAN / AP** | **No** — never proxied through Cloudflare; browsers connect directly over LAN (using an HMAC ticket from `/admin/` or device HTTP auth) |
+| **TinyML Training & USB Recovery Tools** | `ml/`, `tools/device/` | Executed **offline/locally** in Python 3.12 venvs on the **Linux Ubuntu VM** | **No** — local workstation tools only (`dht_fan_model.h` compiles into firmware; `wifi_info.json` stays gitignored on the VM) |
+| **PostgreSQL 18 Database** | `database/`, container `iot_postgres` (`postgres:18.6-alpine3.24`) | Docker Compose inside the **Linux Ubuntu VM** (`postgres:5432` on `iot_net`, `127.0.0.1:5433` on VM loopback) | **No** — strictly private to `iot_backend` on `iot_net` and local maintenance on `127.0.0.1:5433` |
+| **Express 5 Backend & Admin UI** | `services/backend/`, container `iot_backend` (`3000/tcp`) | Docker Compose inside the **Linux Ubuntu VM** (`3000/tcp` internal to `iot_net`, no host port published) | **Yes (Private VPC Origin)** — bridged via `iot_cloudflared` -> Tunnel `iot-env-monitor-sys` (`1 VPC` route) -> Workers VPC Service `iot-env-backend` (`HTTP backend:3000`) |
+| **Cloudflare Tunnel Connector** | Container `iot_cloudflared` (`cloudflare/cloudflared:2026.10.1`) | Docker Compose inside the **Linux Ubuntu VM** (`iot_net`) | **Yes (Private Transport Only)** — maintains outbound tunnel `iot-env-monitor-sys` (`Routes: 1 VPC`; **no** direct public tunnel hostname) |
+| **Cloudflare Workers Edge Gateway** | `services/gateway/` (`wrangler.jsonc`, `src/index.js`) | Deployed from the **Linux Ubuntu VM** via Wrangler onto **Cloudflare Edge (`*.workers.dev`)** | **Yes (Public HTTPS Ingress)** — Workers `iot-env-monitor-sys` & `iot-env-monitor` (`*.sangnguyen232.workers.dev`) forward requests through VPC binding `IOT_BACKEND` |
 
 ## System Architecture
 
 ```mermaid
 flowchart LR
-    sensors["DHT20 and soil probe"] --> board["ESP32-S3 firmware"]
-    board --> relay["GPIO10 fan command"]
-    board --> display["LCD and status LEDs"]
-    browser["Browser on the board's LAN"] <-->|"HTTP and WebSocket"| board
-    board -->|"LAN POST /sensor"| api["Express backend"]
-    board -->|"Remote HTTPS telemetry"| worker["Optional Cloudflare Worker"]
-    worker -->|"VPC Service"| tunnel["cloudflared"]
-    tunnel --> api
-    browser -->|"Admin UI and history"| api
-    api --> pg[("PostgreSQL")]
+    subgraph hw["Hardware & Local Wi-Fi LAN (Not on Cloudflare)"]
+        sensors["DHT20 and soil probe"] --> board["ESP32-S3 firmware (FreeRTOS + INT8 TinyML)"]
+        board --> relay["GPIO10 fan command"]
+        board --> display["LCD and status LEDs"]
+        browser_lan["Browser on Wi-Fi LAN"] <-->|"Direct LAN HTTP :80, /ws & OTA"| board
+    end
+
+    subgraph cf["Cloudflare Edge (Public Workers + Private Workers VPC)"]
+        workers["Cloudflare Workers (*.workers.dev)<br/>iot-env-monitor-sys / iot-env-monitor"]
+        vpc["Workers VPC Service: iot-env-backend<br/>(HTTP -> backend:3000)"]
+        workers -->|"Binding: IOT_BACKEND"| vpc
+    end
+
+    subgraph vm["Linux Ubuntu Virtual Machine (Docker Compose: iot_net)"]
+        tunnel["iot_cloudflared (2026.10.1)<br/>Tunnel: iot-env-monitor-sys (1 VPC route)"]
+        api["iot_backend (Express 5)<br/>Internal 3000/tcp only"]
+        pg[("iot_postgres (PostgreSQL 18)<br/>iot_net:5432 & VM 127.0.0.1:5433")]
+        tunnel -->|"http://backend:3000"| api
+        api --> pg
+    end
+
+    board -->|"HTTPS POST /sensor"| workers
+    browser_remote["Operator Browser"] -->|"HTTPS /login, /admin/*, /healthz"| workers
+    vpc <-->|"Outbound Cloudflare Tunnel"| tunnel
+    board -.->|"Optional local LAN test POST /sensor"| api
 ```
 
-The admin dashboard reads from PostgreSQL through the backend. Opening an embedded dashboard starts a separate connection from the browser to the board's LAN address. The device can keep sampling and controlling the relay while the backend is offline. The in-memory upload queue holds six payloads and discards the oldest when full.
+The central admin dashboard reads from `iot_postgres` through `iot_backend` inside the Linux Ubuntu VM, published remotely through the Cloudflare Worker (`*.workers.dev`) -> Workers VPC (`iot-env-backend`) -> Cloudflare Tunnel (`iot-env-monitor-sys`) chain. Opening an embedded device dashboard from `/admin/` issues a signed 5-minute HMAC ticket and redirects the browser **directly to the board's LAN IP** (`http://<board-lan-ip>/?ticket=...`—never through Cloudflare). The device continues sampling sensors, running TinyML forecasts and controlling the relay locally when the backend or internet is offline; its in-memory upload queue holds six payloads and discards the oldest when full.
 
 ---
 
@@ -48,12 +79,12 @@ The LCD and dashboards display temperature with one decimal place. Humidity uses
 
 ## Directory Structure
 
-- `platformio.ini` selects the Yolo Uno board and maps PlatformIO to the `firmware/` directories. `boards/` contains the board definition, `src/` and `include/` implement the controller, `lib/` contains the LCD and inference libraries, and `data/` contains the dashboard files packaged into LittleFS.
-- `services/backend/` contains the Express ingestion API, session handling, login and admin pages. `services/gateway/` holds the optional Cloudflare Worker and its VPC binding configuration.
-- `database/schema/` and `database/migrations/` define PostgreSQL tables, access grants, sessions, display views and telemetry history. [Existing database upgrades](database/MIGRATIONS.md)
-- `ml/` contains the model's feature definitions, training and export source, history importer, model manifest and bench guide. The firmware builds the shipped model and its metadata into the application image from `firmware/include/dht_fan_model.h` and `firmware/include/fan_model_metadata.h`. [Model and labeling workflow](ml/README.md)
-- `tools/device/` contains the USB utility for recovering Wi-Fi settings from the board.
-- `docker-compose.yml` defines PostgreSQL, the backend and tunnel connector. The public configuration templates are [the server environment](.env.example) and [the firmware header](firmware/include/secrets.h.example). Keep credentials, device exports and built images containing device secrets private.
+- `platformio.ini` selects the Yolo Uno board, defaults upload and serial monitor ports to `/dev/ttyACM0` for local flashing/debugging over Linux Ubuntu VM USB passthrough, and maps PlatformIO to the `firmware/` directories (`boards/`, `src/`, `include/`, `lib/`, and `data/` packaged into LittleFS for the board's local LAN web server).
+- `services/backend/` contains the Express 5 ingestion API, session handling, login and central admin pages run inside `iot_backend` (`3000/tcp` on `iot_net`) on the Linux Ubuntu VM. `services/gateway/` holds the Cloudflare Worker edge gateway deployed via Wrangler onto `*.workers.dev` with Workers VPC binding `IOT_BACKEND`.
+- `database/schema/` and `database/migrations/` define PostgreSQL 18 tables, access grants, sessions, display views and telemetry history inside `iot_postgres` (kept private on `iot_net` and Ubuntu VM loopback `127.0.0.1:5433`). [Existing database upgrades](database/MIGRATIONS.md)
+- `ml/` contains the offline Python 3.12 feature definitions, training and INT8 export scripts, history importer, model manifest and local bench guide executed on the Linux Ubuntu VM. The firmware compiles the shipped model statically into the ESP32-S3 image from `firmware/include/dht_fan_model.h` and `firmware/include/fan_model_metadata.h`. [Model and labeling workflow](ml/README.md)
+- `tools/device/` contains the local USB utility executed on the Linux Ubuntu VM (`/dev/ttyACM0`) for recovering saved Wi-Fi settings from the board's LittleFS partition.
+- `docker-compose.yml` runs `iot_postgres`, `iot_backend`, and `iot_cloudflared` inside the Linux Ubuntu VM. The public configuration templates are [the server environment](.env.example) and [the firmware header](firmware/include/secrets.h.example). Keep credentials, tunnel tokens, device exports and built images containing device secrets private.
 
 ## ESP32-S3 Firmware
 
@@ -144,13 +175,13 @@ The fan task starts with GPIO10 low and the requested mode set to AUTO. It recor
 
 In automatic modes the controller holds the relay OFF until it has a valid configuration and DHT20 sample. Readings older than 15 seconds are stale. Normal switches have a ten-second minimum ON/OFF dwell. Sensor loss or unavailable control forces OFF. An automatic mode or configuration change restarts the OFF dwell. On reboot the board reloads the saved thresholds and selects AUTO. [Control policy](firmware/include/fan_policy.h)
 
-### Wi-Fi, Captive Portal & Embedded Web Server
+### Wi-Fi, Captive Portal & Embedded Web Server (LAN-Only)
 
 With no saved station credentials the board starts a setup access point at `192.168.4.1` using `SSID_AP` and `PASS_AP`. Captive DNS directs clients to the setup page. A station connection attempt can take ten seconds. After a failed attempt the board starts the access point and retries the saved network at intervals of at least 15 seconds. On connection it configures SNTP with `pool.ntp.org` and `time.nist.gov`.
 
-Access to the password-protected Wi-Fi network grants access to the provisioning page in AP mode. On the station network, protected routes accept the configured HTTP credentials or an `iot_ticket` cookie. Opening `/?ticket=...` exchanges a valid backend-signed HMAC-SHA256 ticket for this HttpOnly cookie. Verification checks the board MAC, LAN IP and expiry with the synchronized clock. The WebSocket accepts a one-time token from `/api/ws-token` in an initial `{"page":"auth","token":"..."}` message. OTA uses the configured device HTTP credentials. [Device web server](firmware/src/web_server.cpp)
+The embedded web server, WebSocket endpoint and ElegantOTA run **exclusively on the board's local network interface** (never exposed through Cloudflare Tunnel or Workers). Access to the password-protected Wi-Fi network grants access to the provisioning page in AP mode. On the station network, protected routes accept the configured HTTP credentials or an `iot_ticket` cookie. Opening `http://<board-lan-ip>/?ticket=...` over the Wi-Fi LAN exchanges a valid backend-signed HMAC-SHA256 ticket (requested via `/admin/` over the `*.workers.dev` gateway or local backend) for this HttpOnly cookie. Verification checks the board MAC, LAN IP and expiry with the synchronized clock. The WebSocket accepts a one-time token from `/api/ws-token` in an initial `{"page":"auth","token":"..."}` message. OTA uses the configured device HTTP credentials. [Device web server](firmware/src/web_server.cpp)
 
-**Device HTTP routes on port 80**
+**Device HTTP routes on port 80 (local LAN / AP only)**
 
 - `GET /` exchanges a valid `?ticket=...` for an `HttpOnly` cookie and redirects to the dashboard. Both `/` and `/dashboard.html` serve the authenticated page in station mode.
 - `GET /api/status` — Returns AP mode and applied GPIO `fan_state` / `fan_mode`, reason and decision sample/time.
@@ -162,8 +193,8 @@ Access to the password-protected Wi-Fi network grants access to the provisioning
 - `GET /set-mode?mode=AUTO|SHADOW|AI|MANUAL` — Acknowledges a requested mode (202); applied mode is reported by the controller. AI/SHADOW require a saved valid fallback configuration.
 - `GET /api/wifi-list` — Lists saved SSIDs from `/wifi_list.json` (passwords omitted).
 - `POST /api/wifi-switch` — Queues live Wi-Fi network switching (`{ssid, pass}`).
-- `GET /api/server-url` — Returns current `g_sensorApiUrl`.
-- `/update` — ElegantOTA firmware/filesystem update UI (HTTP Basic Auth).
+- `GET /api/server-url` — Returns current `g_sensorApiUrl` (for example the Cloudflare Worker `*.workers.dev` HTTPS origin).
+- `/update` — ElegantOTA firmware/filesystem update UI (HTTP Basic Auth on local LAN).
 
 ---
 
@@ -171,13 +202,13 @@ Access to the password-protected Wi-Fi network grants access to the provisioning
 
 | LittleFS Path | Purpose |
 | :--- | :--- |
-| `/dashboard.html`, `/dashboard.css`, `/dashboard.js` | Device dashboard page and its public CSS/JavaScript. Direct static requests for saved configuration files are filtered. |
+| `/dashboard.html`, `/dashboard.css`, `/dashboard.js` | Device dashboard page and its public CSS/JavaScript served locally from port 80. Direct static requests for saved configuration files are filtered. |
 | `/info.dat` | Active Wi-Fi JSON (`WIFI_SSID`, `WIFI_PASS`, `STA_IP`) |
 | `/wifi_list.json` | Saved Wi-Fi credentials (new SSIDs are prepended and existing entries are updated in place) |
 | `/fan.json`, `/fan.json.tmp` | Saved FAN AUTO thresholds and OR/AND activation logic plus the temporary save file; both are blocked from direct static access |
-| `/server.json` | Optional runtime override `{"url": "https://..."}` for `SENSOR_API_URL` |
+| `/server.json` | Optional runtime override `{"url": "https://..."}` for `SENSOR_API_URL` (such as the deployed Cloudflare Worker `*.workers.dev` URL) |
 
-Holding GPIO0 low for more than two seconds while the application runs clears saved Wi-Fi, server and fan settings and restarts the board. The next boot opens the setup access point. Uploading a LittleFS image also replaces stored settings. The firmware enables formatting on mount failure. [Storage implementation](firmware/src/device_config.cpp)
+Holding GPIO0 low for more than two seconds while the application runs clears saved Wi-Fi, server and fan settings and restarts the board. The next boot opens the setup access point. Uploading a LittleFS image from the Linux Ubuntu VM also replaces stored settings. The firmware enables formatting on mount failure. [Storage implementation](firmware/src/device_config.cpp)
 
 ---
 
@@ -185,7 +216,7 @@ Holding GPIO0 low for more than two seconds while the application runs clears sa
 
 ### Backend API Endpoints
 
-Implemented in `services/backend/src/index.js` (Express 5, port `3000`):
+Implemented in `services/backend/src/index.js` (Express 5, listening on internal `3000/tcp` inside container `iot_backend` on the Linux Ubuntu VM, and published externally through Cloudflare Workers + Workers VPC + Cloudflare Tunnel):
 
 | Endpoint | Method | Auth | Description |
 | :--- | :---: | :---: | :--- |
@@ -205,14 +236,15 @@ Implemented in `services/backend/src/index.js` (Express 5, port `3000`):
 | `/admin/api/access-requests` | `GET` | Admin | Lists pending temporary device access requests |
 | `/admin/api/access-requests/:id/status` | `GET` | User | Polls request decision and receives HMAC ticket upon approval |
 | `/admin/api/access-requests/:id/decision` | `POST` | Admin | Approves or denies a pending access request |
-| `/admin/api/users` | `GET` / `POST` | Admin | Lists system accounts or creates a new `admin` / `user` account |
+| `/admin/api/users` | `GET` | Admin | Lists system accounts |
+| `/admin/api/users` | `POST` | Admin | Creates a new `admin` / `user` account |
 | `/admin/api/users/:id/devices` | `GET` / `PUT` | Admin | Reads or updates `(device_id, lan_ip)` access grants for a `user` |
 
 ---
 
-### PostgreSQL Schema & Migrations
+### PostgreSQL Schema & Migrations (Private to the Linux Ubuntu VM)
 
-Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
+Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`, running in container `iot_postgres` on the Linux Ubuntu VM and **not** exposed on Cloudflare Tunnel—accessible only to `iot_backend` on `iot_net:5432` and locally on VM loopback `127.0.0.1:5433`):
 
 - **`sensor_logs`** (`database/schema/base.sql`): Stores `id`, `timestamp_real`, `timestamp_up`, `received_at`, numeric `temperature`, `humidity`, optional `soil_moisture` (`0..100` or `null`), `"FAN_state"`, `"MODE_state"`, `"Message"`, `"Score"`, `device_id` (MAC), `lan_ip`, `latency` (µs), and `trigger_source` (`sensor` | `fan` | `ai`), plus `boot_id`, `sample_seq`, `sampled_uptime_ms`, `ai`, `fan_reason`, `fan_config`, `fan_decision_sample_seq` and `fan_decided_uptime_ms`. Retention uses the server receipt time, falling back to upload time for older rows. Cleanup runs at startup and every six hours. `SENSOR_RETENTION_DAYS` defaults to 30 and setting it to 0 disables automatic deletion. The firmware sends `Score: null` and writes model scores to `ai.probabilities`. Its `latency` field measures acquisition-to-payload preparation on the device.
 - **`device_credentials`** (`database/schema/base.sql`): Stores per-device `bcrypt` password hashes (`device_id` PK).
@@ -233,45 +265,53 @@ Configured for **PostgreSQL 18** (`timezone=Asia/Ho_Chi_Minh`):
 
 ---
 
-### Cloudflare Tunnel & Worker Gateway
+### Cloudflare Workers, Workers VPC & Cloudflare Tunnel
 
-- The `cloudflared` connector opens an outbound tunnel to the Docker network. In the supplied Compose configuration the backend listens on internal port 3000 and PostgreSQL publishes port 5433 on host loopback.
-- The Worker in `services/gateway/` forwards requests through `env.IOT_BACKEND` and sets `X-Forwarded-Proto` and `X-Forwarded-Host` for the origin. Device-to-backend HTTP sends the shared key in clear text. The firmware HTTPS client encrypts traffic with server certificate verification disabled. Use the device and backend on trusted networks. [Telemetry transport](firmware/src/telemetry_client.cpp)
+Only the central HTTP origin (`iot_backend:3000`) and its edge proxy (`services/gateway/`) are deployed through Cloudflare, following this four-layer topology:
+
+- **1. Containerized Origin inside the Linux Ubuntu VM (`docker-compose.yml`):** Three containers run on the Docker bridge `iot_net`: `iot_postgres` (`postgres:18.6-alpine3.24`, bound only to `127.0.0.1:5433->5432/tcp` on the Ubuntu VM), `iot_backend` (`3000/tcp` internal to `iot_net` with `TRUST_PROXY=1` and no published host port), and `iot_cloudflared` (`cloudflare/cloudflared:2026.10.1`, running `cloudflared --no-autoupdate tunnel run`).
+- **2. Outbound Cloudflare Tunnel (`iot-env-monitor-sys`):** `iot_cloudflared` registers 1 replica of tunnel `iot-env-monitor-sys` outbound from the Ubuntu VM without opening inbound ports on the VM, hypervisor, or router. The tunnel has **no public hostname route**—its sole configured route is **`1 VPC`** for Cloudflare Workers VPC.
+- **3. Cloudflare Workers VPC Service (`iot-env-backend`):** Configured as an `HTTP` VPC Service (`service_id: 01a13b15-2978-7a33-963b-441c3925539c`) bound to tunnel `iot-env-monitor-sys`, targeting internal hostname `backend` on port `HTTP:3000` (resolved by `iot_cloudflared` on `iot_net`).
+- **4. Cloudflare Workers Edge Gateways on `*.workers.dev` (`services/gateway/`):** Deployed manually from the Linux Ubuntu VM with Wrangler (`"workers_dev": true`, no custom domains and no Cloudflare Access gate in front of the Worker). In the reference deployment, Worker `iot-env-monitor-sys` (`https://iot-env-monitor-sys.sangnguyen232.workers.dev`, defined in `services/gateway/wrangler.jsonc`) and companion Worker `iot-env-monitor` (`https://iot-env-monitor.sangnguyen232.workers.dev`) bind `env.IOT_BACKEND` to VPC Service `iot-env-backend`, rewrite incoming requests to `http://backend:3000`, set `X-Forwarded-Proto: https` and `X-Forwarded-Host`, strip `X-Forwarded-For`, and forward `/sensor`, `/healthz`, `/login`, `/logout`, `/api/me`, and `/admin/*` to `iot_backend`.
+- **Transport security note:** Local LAN HTTP sends the shared key in clear text, whereas remote ESP32 telemetry to `https://<worker>.<subdomain>.workers.dev/sensor` encrypts traffic via `WiFiClientSecure` with certificate verification disabled (`setInsecure()`). Use the device and backend on trusted networks. [Telemetry transport](firmware/src/telemetry_client.cpp)
 
 ---
 
 ## Dashboards
 
-### Embedded Device Dashboard
+### Embedded Device Dashboard (Local LAN Only)
+
+Hosted directly by the ESP32-S3 on port 80 over the local Wi-Fi LAN (`http://<board-lan-ip>/`) or setup AP (`http://192.168.4.1/`), never routed through Cloudflare:
 
 - **Dashboard** (`#dashboard`) displays temperature, air humidity, soil moisture, a clock, the air-risk notification and applied fan/mode badges. Its 60-point chart can add a reading every five or fifteen seconds and has a local canvas fallback. The map shows a fixed marker and uses online tiles. [Device dashboard](firmware/data/dashboard.html)
-- **Settings → WiFi** (`#settings/wifi`) manages credentials, saved-network switching and the backend URL.
+- **Settings → WiFi** (`#settings/wifi`) manages credentials, saved-network switching and the backend URL (pointing to the Cloudflare Worker `*.workers.dev` HTTPS address or a local test IP).
 - **Settings → Fan** (`#settings/fan`) exposes the four thresholds, OR/AND logic, requested mode and manual ON/OFF. Its badges and reason report the applied decision.
 - **Settings → TinyML** (`#settings/tinyml`) shows window fill, fitted slopes, reference class, forecast, scores, model version and sample identity. An expired or mismatched result clears the current proposal.
 
-### Central Admin Dashboard
+### Central Admin Dashboard (Published via Cloudflare Worker + VPC + Tunnel)
 
-The backend serves the login and admin pages. The admin dashboard polls every five seconds for the latest row per device and LAN IP. It displays device and sample freshness, exports a time range as JSONL, and lets an administrator manage accounts, grants, per-device passwords and access requests. A user can open an authorized board from a browser that can reach its LAN IP. [Admin dashboard](services/backend/public/admin/admin.html)
+Served by `iot_backend` through the Cloudflare Worker `*.workers.dev` HTTPS gateway (or locally on `localhost:3000` during host-Node tests on the Linux Ubuntu VM), the central admin dashboard polls every five seconds for the latest row per device and LAN IP. It displays device and sample freshness, exports a time range as JSONL, and lets an administrator manage accounts, grants, per-device passwords and access requests. Selecting **Open dashboard** obtains an HMAC ticket from `iot_backend` and opens a **direct LAN connection** from the operator's browser to `http://<board-lan-ip>/?ticket=...` (requiring the browser to be on the same Wi-Fi LAN or a bridged Ubuntu VM). [Admin dashboard](services/backend/public/admin/admin.html)
 
-## TinyML Training Pipeline
+## TinyML Training Pipeline (Local Python 3.12 on the Linux Ubuntu VM)
 
-The training script generates independent synthetic trajectories and labels each window using the simulated temperature and humidity 30 seconds later. It fits the network, calibrates INT8 quantization from training samples and evaluates the exported model against the current band, a linear forecast and the most frequent training class. The bundled 5,536-byte model is identified by `fan-trend-int8-v2-8abd0b91c744`. Its manifest reports 87.28% desktop INT8 accuracy on 3,600 synthetic test episodes, 71.03% for the instantaneous band and 82.94% for 30-second linear extrapolation. These figures describe the simulator. Training writes a feature CSV, portable model, JSON manifest and two firmware headers under the selected output directory. The repository ships the two headers and the matching manifest, so PlatformIO can compile the model directly. [Model manifest](ml/models/fan_model_manifest.json)
+Developed and executed **offline/locally** in Python 3.12 inside the **Linux Ubuntu virtual machine** (never deployed to Docker or Cloudflare), `ml/train_export.py` generates independent synthetic trajectories and labels each window using the simulated temperature and humidity 30 seconds later. It fits the network, calibrates INT8 quantization from training samples and evaluates the exported model against the current band, a linear forecast and the most frequent training class. The bundled 5,536-byte model is identified by `fan-trend-int8-v2-8abd0b91c744`. Its manifest reports 87.28% desktop INT8 accuracy on 3,600 synthetic test episodes, 71.03% for the instantaneous band and 82.94% for 30-second linear extrapolation. These figures describe the simulator. Training writes a feature CSV, portable model, JSON manifest and two firmware headers under the selected output directory. The repository ships the two headers and the matching manifest, so PlatformIO on the Ubuntu VM compiles the weights directly into the ESP32-S3 firmware. [Model manifest](ml/models/fan_model_manifest.json)
 
-For field evaluation, export JSONL for one device from the admin dashboard and match each reading and fan decision by boot and sample sequence. The import tool can build labeled windows from subsequent observations in a continuous session. Independent sessions and physical measurements are needed to evaluate forecasting and ventilation in the enclosure. [Training and history import](ml/README.md) · [Bench procedure](ml/HIL.md)
+For field evaluation on the Linux Ubuntu VM, export JSONL for one device from `/admin/` (via the deployed `*.workers.dev` gateway or local test backend) and run `ml/import_history.py` locally to match each reading and fan decision by boot and sample sequence and build labeled windows from continuous sessions. Independent sessions and physical measurements are needed to evaluate forecasting and ventilation in the enclosure. [Training and history import](ml/README.md) · [Bench procedure](ml/HIL.md)
 
-## Device Utility Tools
+## Device Utility Tools (Local USB on the Linux Ubuntu VM)
 
-`tools/device/pull_wifi_info.py` reads the LittleFS partition over USB and combines the saved Wi-Fi list with the active station IP, when available. It writes SSIDs, saved Wi-Fi passwords and available station IP values to the ignored path `local/device/wifi_info.json`. [Installation and usage](GUIDE.md#8-optional-workstation-tools)
+`tools/device/pull_wifi_info.py` runs **strictly locally** inside the Linux Ubuntu VM over USB passthrough (`/dev/ttyACM0`), reads the ESP32-S3 LittleFS partition via `esptool`, and combines the saved Wi-Fi list with the active station IP, when available. It writes SSIDs, saved Wi-Fi passwords and available station IP values to the Git-ignored local path `local/device/wifi_info.json`. [Installation and usage](GUIDE.md#8-workstation-tools-on-the-linux-ubuntu-vm)
 
 ## Installation & Deployment
 
-Use the setup guide for the local PostgreSQL and Node workflow, the Cloudflare deployment route, firmware and LittleFS uploads, and on-device verification. The migration guide covers existing database volumes. [Setup guide](GUIDE.md) · [Database upgrades](database/MIGRATIONS.md)
+All coding, local testing, firmware/LittleFS flashing over USB passthrough, HIL bench checks, and selective deployment of the Express backend + Cloudflare Worker VPC gateway over Cloudflare Tunnel were performed on a **Linux Ubuntu virtual machine**. Use the setup guide to reproduce the local Ubuntu VM workflow, firmware provisioning, and the Docker + Cloudflare Tunnel + Workers VPC + Wrangler deployment. The migration guide covers PostgreSQL 18 volumes on the Ubuntu VM. [Setup guide](GUIDE.md) · [Database upgrades](database/MIGRATIONS.md)
 
 ## Libraries & Runtime Versions
 
-- **Firmware** uses PlatformIO environment `yolo_uno`, Arduino on `espressif32@7.1.3`, LittleFS, the local LCD driver and the bundled TensorFlow Lite Micro sources. PlatformIO resolves the pins for ESPAsyncWebServer, ArduinoJson, ElegantOTA, Adafruit NeoPixel and DHT20. [PlatformIO configuration](platformio.ini)
-- **Backend and gateway** declare Node `>=26.12.0 <27` and npm `>=12.2.0 <13`. The development Node pin is 26.12.0. Use `npm ci` in the chosen service directory to install its lockfile. The backend uses Express 5 and PostgreSQL 18. The optional Worker uses Wrangler 4. [Backend manifest](services/backend/package.json) · [Gateway manifest](services/gateway/package.json) · [Compose services](docker-compose.yml)
-- **Training and device utilities** have separate Python requirements. Python 3.12 is the reference training environment. NumPy, TensorFlow CPU and Keras support training and export. The USB reader uses esptool and littlefs-python. [Training dependencies](ml/requirements.txt) · [USB reader dependencies](tools/device/requirements.txt)
+- **Reference Workstation & Host Platform** uses a **Linux Ubuntu virtual machine** (`sang@Linux`, Ubuntu 26.04 LTS x86_64 guest VM, Docker Engine + Compose (`docker compose` / `docker-compose`), `cloudflare/cloudflared:2026.10.1`, USB CDC passthrough on `/dev/ttyACM0`, branch `project_linux`).
+- **Firmware (local build -> ESP32-S3 MCU)** uses PlatformIO environment `yolo_uno`, Arduino on `espressif32@7.1.3`, LittleFS, the local LCD driver and the bundled TensorFlow Lite Micro sources. PlatformIO resolves the pins for ESPAsyncWebServer, ArduinoJson, ElegantOTA, Adafruit NeoPixel and DHT20. [PlatformIO configuration](platformio.ini)
+- **Backend & Cloudflare Worker Gateway** declare Node `>=26.12.0 <27` and npm `>=12.2.0 <13` (`.nvmrc` pins `26.12.0` on the Ubuntu VM). Use `npm ci` in the chosen service directory to install its lockfile. `iot_backend` uses Express 5 with `iot_postgres` on PostgreSQL 18 (`postgres:18.6-alpine3.24`). `services/gateway` uses Wrangler 4 to publish Cloudflare Workers onto `*.workers.dev` bound to Workers VPC (`IOT_BACKEND`). [Backend manifest](services/backend/package.json) · [Gateway manifest](services/gateway/package.json) · [Compose services](docker-compose.yml)
+- **Offline Training & USB Device Utilities (local Ubuntu VM only)** run in separate Python 3.12 virtual environments (`.python-version`). NumPy, TensorFlow CPU and Keras support training and INT8 export; `esptool` and `littlefs-python` read LittleFS over USB. [Training dependencies](ml/requirements.txt) · [USB reader dependencies](tools/device/requirements.txt)
 
 ## License notices
 

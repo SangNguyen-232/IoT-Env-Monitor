@@ -1,3 +1,12 @@
+/**
+ * Cloudflare Worker edge gateway (`*.workers.dev`) for IoT-Env-Monitor.
+ * Published via Wrangler from the Linux Ubuntu virtual machine. Forwards public HTTPS
+ * requests (`/sensor`, `/healthz`, `/login`, `/logout`, `/api/me`, `/admin/*`) through
+ * Workers VPC binding `env.IOT_BACKEND` (`iot-env-backend` -> `http://backend:3000`)
+ * over Cloudflare Tunnel `iot-env-monitor-sys` (`1 VPC` route) into `iot_backend`
+ * inside the Ubuntu VM Docker network (`iot_net`). Device port-80 dashboards and
+ * PostgreSQL (`127.0.0.1:5433`) are never routed through this gateway.
+ */
 export default {
   async fetch(request, env) {
     const incomingUrl = new URL(request.url);

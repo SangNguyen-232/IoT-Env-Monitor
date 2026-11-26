@@ -1,7 +1,9 @@
 [tool.pyright]
-# ml/train_export.py uses numpy/tensorflow from ml/requirements.txt.
-# TensorFlow has no usable stdlib-style stubs → reportMissingModuleSource off.
-# If Pylance still complains, set Python interpreter to the same env as: pip install -r ml/requirements.txt
+# Offline Python 3.12 TinyML training/INT8 export (`ml/`) and local USB LittleFS tools
+# (`tools/device/`) run strictly locally inside the Linux Ubuntu virtual machine (never
+# deployed onto Docker or Cloudflare).
+# `ml/train_export.py` uses numpy/tensorflow from `ml/requirements.txt` (no stdlib-style stubs).
+# Set the editor Python interpreter on the Ubuntu VM to the venv where `ml/requirements.txt` is installed.
 exclude = [".pio", ".venv", "local", "firmware/lib", "services/*/node_modules"]
 reportMissingImports = "none"
 reportMissingModuleSource = "none"

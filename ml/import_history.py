@@ -1,4 +1,9 @@
-"""Convert saved admin history to 7-sample inputs and optional +30 s outcome labels."""
+"""Convert saved admin history to 7-sample inputs and optional +30 s outcome labels.
+
+Executed locally in Python 3.12 on the Linux Ubuntu VM against JSONL telemetry files
+downloaded from `/admin/` (served via the `*.workers.dev` Cloudflare Worker + Workers VPC +
+Cloudflare Tunnel gateway to `iot_backend`, or from a local VM test session).
+"""
 from __future__ import annotations
 
 import argparse

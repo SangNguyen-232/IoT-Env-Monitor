@@ -1,3 +1,7 @@
+# Production image for `iot_backend` built and run in Docker Compose on the Linux Ubuntu VM.
+# Listens on internal port 3000/tcp (`iot_net`, TRUST_PROXY=1) and serves as the private
+# origin bridged via `iot_cloudflared` (tunnel `iot-env-monitor-sys`, `1 VPC` route) to
+# Cloudflare Workers VPC (`iot-env-backend`) behind Cloudflare Workers (`*.workers.dev`).
 FROM node:26.12.0-alpine3.24
 
 # Install timezone data and update npm.

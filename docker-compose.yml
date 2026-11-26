@@ -1,13 +1,21 @@
+# IoT-Env-Monitor — Server Containers on the Linux Ubuntu VM (Selective Cloudflare Exposure)
+# Orchestrated via `docker compose` / `docker-compose` inside the Linux Ubuntu VM:
+# - `iot_postgres`: private to `iot_net:5432` and Ubuntu VM loopback `127.0.0.1:5433` (NEVER on Cloudflare).
+# - `iot_backend`: internal `3000/tcp` on `iot_net` only (no host port published).
+# - `iot_cloudflared`: registers outbound tunnel `iot-env-monitor-sys` (`1 VPC` route only, no public
+#   tunnel hostname) so Cloudflare Workers (`*.workers.dev`) reach `http://backend:3000` privately
+#   through Workers VPC Service `iot-env-backend`. Firmware, LAN dashboards & Python tools stay local.
+
 services:
 
-  # ─── PostgreSQL Database ────────────────────────────────────
+  # ─── PostgreSQL 18 (Private: iot_net:5432 + Ubuntu VM loopback 127.0.0.1:5433) ─
   postgres:
     container_name: iot_postgres
     image: postgres:18.6-alpine3.24
     command: ["postgres", "-c", "timezone=Asia/Ho_Chi_Minh"]
     restart: unless-stopped
     ports:
-      # Host port 5433 (localhost only) maps to container port 5432.
+      # Host port 5433 (Ubuntu VM localhost only) maps to container port 5432.
       - "127.0.0.1:5433:5432"
     environment:
       POSTGRES_USER: ${DB_USER:-iot_user}
@@ -33,14 +41,14 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ─── Node.js Backend ────────────────────────────────────────
+  # ─── Node.js Backend (Internal 3000/tcp on iot_net; Workers VPC origin) ─
   backend:
     container_name: iot_backend
     build:
       context: ./services/backend
       dockerfile: Dockerfile
     restart: unless-stopped
-    # Keep port 3000 internal to Docker; cloudflared connects over the shared network.
+    # Keep port 3000 internal to iot_net; Workers VPC (`iot-env-backend`) reaches http://backend:3000 via cloudflared.
     expose:
       - "3000"
     env_file:
@@ -74,7 +82,7 @@ services:
         max-size: "10m"
         max-file: "3"
 
-  # ─── Cloudflare Tunnel ──────────────────────────────────────
+  # ─── Cloudflare Tunnel (Outbound transport for Workers VPC `1 VPC` route) ─
   cloudflared:
     container_name: iot_cloudflared
     image: cloudflare/cloudflared:2026.10.1

@@ -1,3 +1,7 @@
+// Asynchronous telemetry uploader (`task_database`) running on the ESP32-S3.
+// Posts `/sensor` snapshots over HTTPS to the Cloudflare Worker (`*.workers.dev`) gateway
+// — routed via Workers VPC (`iot-env-backend`) and Cloudflare Tunnel (`iot_cloudflared`) to
+// `iot_backend:3000` on the Linux Ubuntu VM — or over plain HTTP on a local test LAN.
 #include "telemetry_client.h"
 #include <Arduino.h>
 #include <ArduinoJson.h>

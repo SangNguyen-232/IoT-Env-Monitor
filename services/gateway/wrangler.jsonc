@@ -1,3 +1,8 @@
+// Cloudflare Worker edge gateway deployed via Wrangler from the Linux Ubuntu VM onto
+// `*.workers.dev` (Worker `iot-env-monitor-sys`, plus companion `iot-env-monitor` sharing
+// the same binding). Binds `IOT_BACKEND` to Workers VPC HTTP Service `iot-env-backend`
+// (`HTTP -> backend:3000`) over Cloudflare Tunnel `iot-env-monitor-sys` (`1 VPC` route ->
+// `iot_cloudflared` on `iot_net` inside the Ubuntu VM).
 {
   "$schema": "./node_modules/wrangler/config-schema.json",
   "name": "iot-env-monitor-sys",

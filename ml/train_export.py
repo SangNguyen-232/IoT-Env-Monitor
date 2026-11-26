@@ -1,4 +1,9 @@
-"""Train and export a full-INT8 classifier of the DHT20 band 30 seconds ahead."""
+"""Train and export a full-INT8 classifier of the DHT20 band 30 seconds ahead.
+
+Executed offline/locally in a Python 3.12 venv on the Linux Ubuntu VM (never deployed
+to Docker or Cloudflare) to train synthetic or imported session datasets, qualify INT8
+quantization, and emit static C headers compiled into on-device ESP32-S3 firmware.
+"""
 from __future__ import annotations
 
 import argparse

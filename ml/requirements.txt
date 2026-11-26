@@ -1,4 +1,6 @@
-# Python >=3.12 (NumPy 2.5 requires Python 3.12 or newer; CPU build avoids unused CUDA libraries).
+# Offline local workstation dependencies installed in a Python >=3.12 venv on the Linux Ubuntu VM
+# (never containerized or deployed onto Cloudflare) for TinyML training, INT8 C-header export,
+# and local import of JSONL telemetry downloaded from `/admin/` (CPU build avoids unused CUDA libs).
 numpy==2.5.4
 tensorflow-cpu==2.21.0
 # Pin the converter-facing Keras version used for the shipped model.

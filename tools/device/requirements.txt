@@ -1,4 +1,4 @@
-# Optional ESP32 flash backup and LittleFS maintenance tools.
-# Installed separately from the PlatformIO-managed build tools.
+# Local USB maintenance tools installed in a Python venv on the Linux Ubuntu VM
+# (separate from PlatformIO and never deployed) to read ESP32-S3 LittleFS over `/dev/ttyACM0`.
 esptool==5.6.0
 littlefs-python==0.19.0

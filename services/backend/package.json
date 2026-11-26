@@ -1,6 +1,7 @@
 {
   "name": "iot-env-monitor-backend",
   "version": "1.0.0",
+  "description": "Express 5 ingestion API and central Admin Dashboard running inside Docker (`iot_net:3000`) on a Linux Ubuntu VM and bridged via Cloudflare Tunnel (`1 VPC`) + Workers VPC behind `*.workers.dev`.",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
